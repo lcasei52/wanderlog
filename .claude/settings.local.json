@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(npx shadcn@latest add dropdown-menu avatar badge)",
+      "Bash(npx shadcn@latest add select)",
+      "WebFetch(domain:wanderlog.com)",
+      "Bash(npx shadcn@latest add form label)"
+    ]
+  }
+}
