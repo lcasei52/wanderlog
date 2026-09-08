@@ -11,8 +11,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { type DateRange } from "react-day-picker";
-import { format, differenceInDays, addDays } from "date-fns";
+import { format, differenceInDays, addDays, parse } from "date-fns";
 import { zhCN } from "date-fns/locale";
+import type { TripSummary } from "@/types/trip";
 import TripHeaderCard from "./TripHeaderCard";
 import BookingCard from "./overview/BookingCard";
 import BudgetCard from "./overview/BudgetCard";
@@ -42,17 +43,32 @@ interface Hotel {
 interface Place {
   id: string;
   name: string;
+  address?: string;
+  location?: {
+    lng: number;
+    lat: number;
+  };
 }
 
-export default function DetailContent() {
+interface DetailContentProps {
+  /** 来自数据库的行程快照 */
+  trip?: TripSummary;
+}
+
+export default function DetailContent({ trip }: DetailContentProps) {
   const overviewRef = useRef<HTMLDivElement>(null);
   const itineraryRef = useRef<HTMLDivElement>(null);
   const budgetRef = useRef<HTMLDivElement>(null);
 
-  // 日期范围状态
-  const [dateRange, setDateRange] = useState<DateRange | undefined>({
-    from: new Date(2024, 2, 15), // 3月15日
-    to: new Date(2024, 2, 20), // 3月20日
+  // 日期范围状态：优先用行程自带的起止日期初始化
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
+    const from = trip?.startDate
+      ? parse(trip.startDate, "yyyy-MM-dd", new Date())
+      : undefined;
+    const to = trip?.endDate
+      ? parse(trip.endDate, "yyyy-MM-dd", new Date())
+      : undefined;
+    return from && to ? { from, to } : undefined;
   });
 
   const [lists, setLists] = useState([
@@ -75,6 +91,9 @@ export default function DetailContent() {
   // 航班和酒店状态
   const [flights, setFlights] = useState<Flight[]>([]);
   const [hotels, setHotels] = useState<Hotel[]>([]);
+
+  // 概览地点状态 - 按列表 ID 存储
+  const [overviewPlaces, setOverviewPlaces] = useState<Record<string, Place[]>>({});
 
   // 展开状态
   const [expandedStates, setExpandedStates] = useState<Record<string, boolean>>({});
@@ -120,14 +139,10 @@ export default function DetailContent() {
   };
 
   // 处理添加地点
-  const handleAddPlace = (dayNumber: number, placeName: string) => {
-    const newPlace: Place = {
-      id: Date.now().toString(),
-      name: placeName,
-    };
+  const handleAddPlace = (dayNumber: number, place: Place) => {
     setDailyPlaces((prev) => ({
       ...prev,
-      [dayNumber]: [...(prev[dayNumber] || []), newPlace],
+      [dayNumber]: [...(prev[dayNumber] || []), place],
     }));
   };
 
@@ -175,7 +190,11 @@ export default function DetailContent() {
 
         {/* 悬浮卡片 */}
         <div className="absolute inset-x-0 bottom-0 translate-y-1/2 px-6">
-          <TripHeaderCard dateRange={dateRange} onDateRangeChange={setDateRange} />
+          <TripHeaderCard
+            dateRange={dateRange}
+            onDateRangeChange={setDateRange}
+            initialTitle={trip?.name}
+          />
         </div>
       </div>
 
@@ -213,8 +232,15 @@ export default function DetailContent() {
                 }
                 flights={list.variant === "flights" ? flights : undefined}
                 hotels={list.variant === "hotels" ? hotels : undefined}
+                places={list.variant === "default" ? overviewPlaces[list.id] : undefined}
                 onFlightsChange={list.variant === "flights" ? setFlights : undefined}
                 onHotelsChange={list.variant === "hotels" ? setHotels : undefined}
+                onPlacesChange={
+                  list.variant === "default"
+                    ? (places) =>
+                        setOverviewPlaces((prev) => ({ ...prev, [list.id]: places }))
+                    : undefined
+                }
                 isExpanded={expandedStates[list.variant]}
                 onExpandChange={(expanded) =>
                   setExpandedStates((prev) => ({ ...prev, [list.variant]: expanded }))

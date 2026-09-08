@@ -30,8 +30,20 @@ import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import FlightCard from "./FlightCard";
 import HotelCard from "./HotelCard";
+import PlaceSearchInput from "@/components/PlaceSearchInput";
+import { PlaceSearchResult } from "@/hooks/usePlaceSearch";
 
 type VariantType = "notes" | "flights" | "hotels" | "default";
+
+export interface Place {
+  id: string;
+  name: string;
+  address?: string;
+  location?: {
+    lng: number;
+    lat: number;
+  };
+}
 
 interface Flight {
   id: string;
@@ -61,8 +73,10 @@ interface CollapsibleListItemProps {
   onTitleChange: (newTitle: string) => void;
   flights?: Flight[];
   hotels?: Hotel[];
+  places?: Place[];
   onFlightsChange?: (flights: Flight[]) => void;
   onHotelsChange?: (hotels: Hotel[]) => void;
+  onPlacesChange?: (places: Place[]) => void;
   isExpanded?: boolean;
   onExpandChange?: (expanded: boolean) => void;
 }
@@ -75,8 +89,10 @@ export default function CollapsibleListItem({
   onTitleChange,
   flights: externalFlights,
   hotels: externalHotels,
+  places: externalPlaces,
   onFlightsChange,
   onHotelsChange,
+  onPlacesChange,
   isExpanded: externalIsExpanded,
   onExpandChange,
 }: CollapsibleListItemProps) {
@@ -95,11 +111,13 @@ export default function CollapsibleListItem({
   const [showFlightDialog, setShowFlightDialog] = useState(false);
   const [showHotelDialog, setShowHotelDialog] = useState(false);
 
-  // 航班和酒店数据 - 使用外部状态或内部状态
+  // 航班、酒店和地点数据 - 使用外部状态或内部状态
   const flights = externalFlights ?? [];
   const setFlights = onFlightsChange ?? (() => {});
   const hotels = externalHotels ?? [];
   const setHotels = onHotelsChange ?? (() => {});
+  const places = externalPlaces ?? [];
+  const setPlaces = onPlacesChange ?? (() => {});
 
   // 表单数据
   const [flightForm, setFlightForm] = useState({
@@ -184,6 +202,22 @@ export default function CollapsibleListItem({
     setHotels(hotels.filter((h) => h.id !== id));
   };
 
+  // 处理地点选择
+  const handlePlaceSelect = (placeResult: PlaceSearchResult) => {
+    const newPlace: Place = {
+      id: placeResult.id,
+      name: placeResult.name,
+      address: placeResult.address,
+      location: placeResult.location,
+    };
+    setPlaces([...places, newPlace]);
+  };
+
+  // 删除地点
+  const handleDeletePlace = (id: string) => {
+    setPlaces(places.filter((p) => p.id !== id));
+  };
+
   const renderExpandedContent = () => {
     switch (variant) {
       case "notes":
@@ -244,14 +278,31 @@ export default function CollapsibleListItem({
 
       case "default":
         return (
-          <div className="pb-5 px-6 pl-14">
-            <div className="flex items-center gap-2">
-              <MapPin className="h-4 w-4 text-gray-400" />
-              <Input
-                placeholder="添加地点"
-                className="flex-1 border-0 border-b border-gray-200 rounded-none px-0 focus-visible:ring-0 focus-visible:border-orange-300"
-              />
-            </div>
+          <div className="pb-5 px-6 pl-14 space-y-2">
+            {/* 显示已添加的地点 */}
+            {places.map((place) => (
+              <div
+                key={place.id}
+                className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 group"
+              >
+                <MapPin className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                <span className="flex-1 text-sm text-gray-700">{place.name}</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => handleDeletePlace(place.id)}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+
+            {/* 添加地点搜索输入框 */}
+            <PlaceSearchInput
+              placeholder="搜索并添加地点"
+              onPlaceSelect={handlePlaceSelect}
+            />
           </div>
         );
 

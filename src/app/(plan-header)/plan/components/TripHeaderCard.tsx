@@ -18,11 +18,14 @@ import { zhCN } from "date-fns/locale";
 interface TripHeaderCardProps {
   dateRange?: DateRange;
   onDateRangeChange?: (dateRange: DateRange | undefined) => void;
+  /** 行程名（来自数据库），用于初始化标题 */
+  initialTitle?: string;
 }
 
 export default function TripHeaderCard({
   dateRange: externalDateRange,
   onDateRangeChange,
+  initialTitle,
 }: TripHeaderCardProps) {
   const [internalDateRange, setInternalDateRange] = useState<DateRange | undefined>({
     from: new Date(2024, 2, 15), // 3月15日
@@ -38,7 +41,7 @@ export default function TripHeaderCard({
     }
   };
 
-  const [title, setTitle] = useState("前往西宁的旅行");
+  const [title, setTitle] = useState(initialTitle ?? "新的旅行");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
 
   const handleTitleSubmit = () => {

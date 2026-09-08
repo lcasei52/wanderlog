@@ -3,22 +3,30 @@
 import { useState } from "react";
 import { MapPin, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import PlaceSearchInput from "@/components/PlaceSearchInput";
+import { PlaceSearchResult } from "@/hooks/usePlaceSearch";
+
+export interface Place {
+  id: string;
+  name: string;
+  address?: string;
+  location?: {
+    lng: number;
+    lat: number;
+  };
+}
 
 interface DayCardProps {
   dayNumber: number;
   date: string;
-  places?: Array<{
-    id: string;
-    name: string;
-  }>;
-  onAddPlace?: (dayNumber: number, placeName: string) => void;
+  places?: Place[];
+  onAddPlace?: (dayNumber: number, place: Place) => void;
   onDeletePlace?: (dayNumber: number, placeId: string) => void;
 }
 
@@ -29,13 +37,18 @@ export default function DayCard({
   onAddPlace,
   onDeletePlace,
 }: DayCardProps) {
-  const [newPlaceName, setNewPlaceName] = useState("");
   const [isAddingPlace, setIsAddingPlace] = useState(false);
 
-  const handleAddPlace = () => {
-    if (newPlaceName.trim() && onAddPlace) {
-      onAddPlace(dayNumber, newPlaceName.trim());
-      setNewPlaceName("");
+  // 处理地点选择
+  const handlePlaceSelect = (placeResult: PlaceSearchResult) => {
+    if (onAddPlace) {
+      const place: Place = {
+        id: placeResult.id,
+        name: placeResult.name,
+        address: placeResult.address,
+        location: placeResult.location,
+      };
+      onAddPlace(dayNumber, place);
       setIsAddingPlace(false);
     }
   };
@@ -86,29 +99,11 @@ export default function DayCard({
 
       {/* 添加地点输入框或按钮 */}
       {isAddingPlace ? (
-        <div className="flex items-center gap-2">
-          <MapPin className="h-4 w-4 text-gray-400" />
-          <Input
-            value={newPlaceName}
-            onChange={(e) => setNewPlaceName(e.target.value)}
-            onBlur={() => {
-              if (!newPlaceName.trim()) {
-                setIsAddingPlace(false);
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                handleAddPlace();
-              } else if (e.key === "Escape") {
-                setNewPlaceName("");
-                setIsAddingPlace(false);
-              }
-            }}
-            placeholder="添加地点"
-            className="flex-1 border-0 border-b border-gray-200 rounded-none px-0 focus-visible:ring-0 focus-visible:border-orange-300"
-            autoFocus
-          />
-        </div>
+        <PlaceSearchInput
+          placeholder="搜索并添加地点"
+          onPlaceSelect={handlePlaceSelect}
+          onCancel={() => setIsAddingPlace(false)}
+        />
       ) : (
         <Button
           variant="link"

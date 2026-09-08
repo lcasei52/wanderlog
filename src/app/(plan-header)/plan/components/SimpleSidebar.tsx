@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { parse, format, differenceInDays, addDays } from "date-fns";
 import { Sparkles, ChevronLeft } from "lucide-react";
+import type { TripSummary } from "@/types/trip";
 import { Button } from "@/components/ui/button";
 import {
   Accordion,
@@ -10,8 +12,26 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 
-export default function SimpleSidebar() {
+export default function SimpleSidebar({ trip }: { trip?: TripSummary }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // 由行程起止日期算出每天的标签
+  const from = trip?.startDate
+    ? parse(trip.startDate, "yyyy-MM-dd", new Date())
+    : undefined;
+  const to = trip?.endDate
+    ? parse(trip.endDate, "yyyy-MM-dd", new Date())
+    : undefined;
+  const dayDates =
+    from && to && to >= from
+      ? Array.from({ length: differenceInDays(to, from) + 1 }, (_, i) =>
+          addDays(from, i),
+        )
+      : [];
+  const dateText =
+    from && to
+      ? `${format(from, "yyyy年M月d日")} - ${format(to, "yyyy年M月d日")}`
+      : "未设置日期";
 
   const scrollToSection = (sectionId: string) => {
     const element = document.getElementById(sectionId);
@@ -58,15 +78,15 @@ export default function SimpleSidebar() {
               <div className="space-y-3 text-sm text-gray-600">
                 <div>
                   <p className="font-medium text-gray-900 mb-1">行程名称</p>
-                  <p>前往西宁的旅行</p>
+                  <p>{trip?.name ?? "未命名行程"}</p>
                 </div>
                 <div>
                   <p className="font-medium text-gray-900 mb-1">日期</p>
-                  <p>2024年3月15日 - 2024年3月20日</p>
+                  <p>{dateText}</p>
                 </div>
                 <div>
                   <p className="font-medium text-gray-900 mb-1">协作者</p>
-                  <p>1 位旅伴</p>
+                  <p>暂无协作者</p>
                 </div>
               </div>
             </AccordionContent>
@@ -82,14 +102,18 @@ export default function SimpleSidebar() {
             </AccordionTrigger>
             <AccordionContent className="px-4 pb-4">
               <div className="space-y-2">
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="font-medium text-sm">Day 1 - 3月15日</p>
-                  <p className="text-xs text-gray-600 mt-1">0 个地点</p>
-                </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="font-medium text-sm">Day 2 - 3月16日</p>
-                  <p className="text-xs text-gray-600 mt-1">0 个地点</p>
-                </div>
+                {dayDates.length > 0 ? (
+                  dayDates.map((date, i) => (
+                    <div key={date.toISOString()} className="p-3 bg-gray-50 rounded-lg">
+                      <p className="font-medium text-sm">
+                        Day {i + 1} - {format(date, "M月d日")}
+                      </p>
+                      <p className="text-xs text-gray-600 mt-1">0 个地点</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-gray-500">先设置行程日期</p>
+                )}
                 <Button
                   variant="outline"
                   size="sm"

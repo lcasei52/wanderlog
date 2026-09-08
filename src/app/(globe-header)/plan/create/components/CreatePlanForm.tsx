@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
+import { format } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Plus, Globe, Users, Lock } from "lucide-react";
-import { Form } from "@/components/ui/form";
+import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -16,10 +18,20 @@ import {
 } from "@/components/ui/select";
 import DateRangeSelect from "./DateRangeSelect";
 import InputWithLabel from "./InputWithLabel";
+import DestinationSearchInput, { DestinationResult } from "@/components/DestinationSearchInput";
+import { createTrip } from "@/actions/trips";
 
 // 表单验证规则
 const formSchema = z.object({
   destination: z.string().min(1, "选择一个目的地开始计划"),
+  destinationData: z.object({
+    name: z.string(),
+    location: z.object({
+      lng: z.number(),
+      lat: z.number(),
+    }),
+    type: z.enum(["city", "province", "country"]),
+  }).optional(),
   startDate: z.date().optional(),
   endDate: z.date().optional(),
   inviteEmail: z
@@ -34,6 +46,8 @@ type FormValues = z.infer<typeof formSchema>;
 
 export default function CreatePlanForm() {
   const [showInviteInput, setShowInviteInput] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const router = useRouter();
 
   const form = useForm<FormValues>({
     mode: "onBlur",
@@ -45,19 +59,63 @@ export default function CreatePlanForm() {
     },
   });
 
-  const onSubmit = (data: FormValues) => {
-    console.log("表单数据:", data);
-    // TODO: 处理创建行程逻辑
+  const onSubmit = async (data: FormValues) => {
+    setIsSubmitting(true);
+    try {
+      // 根据目的地生成行程名，如"前往武汉的旅行"
+      const destName = data.destinationData?.name ?? data.destination;
+      const name = destName ? `前往${destName}的旅行` : "新的旅行";
+
+      const { id } = await createTrip({
+        name,
+        destination: data.destinationData ?? null,
+        startDate: data.startDate ? format(data.startDate, "yyyy-MM-dd") : null,
+        endDate: data.endDate ? format(data.endDate, "yyyy-MM-dd") : null,
+        privacy: data.privacy,
+        inviteEmail: data.inviteEmail ?? "",
+      });
+
+      // 创建成功 → 跳到该行程的详情页
+      router.push(`/plan/${id}`);
+    } catch (err) {
+      console.error("创建行程失败:", err);
+      alert("创建行程失败，请稍后重试");
+      setIsSubmitting(false);
+    }
+  };
+
+  // 处理目的地选择
+  const handleDestinationSelect = (destination: DestinationResult) => {
+    form.setValue("destination", destination.name);
+    form.setValue("destinationData", {
+      name: destination.name,
+      location: destination.location,
+      type: destination.type,
+    });
+    // 清除验证错误
+    form.clearErrors("destination");
   };
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
         {/* 目的地输入 */}
-        <InputWithLabel
-          fieldTitle="去哪儿？"
-          inputName="destination"
-          placeholder="例如：纽约、巴黎、日本"
+        <FormField
+          control={form.control}
+          name="destination"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="text-base font-medium">去哪儿？</FormLabel>
+              <FormControl>
+                <DestinationSearchInput
+                  value={field.value}
+                  onChange={handleDestinationSelect}
+                  placeholder="例如：武汉、湖北、北京"
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
         />
 
         {/* 日期选择 */}
@@ -125,9 +183,10 @@ export default function CreatePlanForm() {
         {/* 提交按钮 */}
         <Button
           type="submit"
-          className="w-full h-12 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-full"
+          disabled={isSubmitting}
+          className="w-full h-12 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-full disabled:opacity-60"
         >
-          开始规划
+          {isSubmitting ? "创建中..." : "开始规划"}
         </Button>
       </form>
     </Form>
