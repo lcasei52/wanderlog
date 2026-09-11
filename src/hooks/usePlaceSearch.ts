@@ -2,16 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useDebounce } from "./useDebounce";
+import type { PlacePoi } from "@/types/place";
 
-export interface PlaceSearchResult {
-  id: string;
-  name: string;
-  address: string;
-  location: {
-    lng: number;
-    lat: number;
-  };
-}
+/** 保持旧名：搜索结果即 PlacePoi（carry tel/type/photo），方便既有 import 方不改名 */
+export type PlaceSearchResult = PlacePoi;
 
 /**
  * 高德地图地点搜索 Hook
@@ -55,10 +49,11 @@ export function usePlaceSearch() {
           plugins: ["AMap.PlaceSearch"],
         });
 
-        // 创建地点搜索实例
+        // 创建地点搜索实例。extensions:"all" 才会返回 poi.photos/tel/type（详情卡要用）
         const placeSearch = new AMap.PlaceSearch({
           pageSize: 10,
           pageIndex: 1,
+          extensions: "all",
         });
 
         // 执行搜索
@@ -75,6 +70,9 @@ export function usePlaceSearch() {
                 lng: poi.location.lng,
                 lat: poi.location.lat,
               },
+              tel: poi.tel || undefined,
+              type: poi.type || undefined,
+              photo: poi.photos?.[0]?.url ?? null,
             }));
             console.log("搜索到", searchResults.length, "个结果");
             setResults(searchResults);

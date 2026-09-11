@@ -12,4 +12,6 @@ export interface TripSummary {
     type: "city" | "province" | "country";
     location: { lng: number; lat: number };
   };
+  coverImageUrl?: string | null; // 网络图片 URL
+  coverImageData?: string | null; // 本地图片 base64
 }

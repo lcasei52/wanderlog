@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -37,6 +38,8 @@ export interface HomeTrip {
   startDate: string | null; // "YYYY-MM-DD"
   endDate: string | null;
   destinationName?: string | null;
+  coverImageUrl?: string | null;
+  coverImageData?: string | null;
 }
 
 /** "2024-03-15" -> "3月15日" */
@@ -208,9 +211,21 @@ export default function HomeTrips({ trips }: { trips: HomeTrip[] }) {
                     className="group relative bg-white rounded-lg border hover:shadow-lg transition-shadow overflow-hidden"
                   >
                     <Link href={`/plan/${trip.id}`} className="block cursor-pointer">
-                      {/* 卡片图片区域（暂无封面，用渐变色占位） */}
-                      <div className="aspect-[4/3] bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center">
-                        <span className="text-gray-400 text-sm">封面图片</span>
+                      {/* 卡片图片区域 */}
+                      <div className="relative aspect-[4/3]">
+                        {trip.coverImageUrl || trip.coverImageData ? (
+                          <Image
+                            src={trip.coverImageUrl || trip.coverImageData!}
+                            alt={trip.name}
+                            fill
+                            className="object-cover"
+                            sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center">
+                            <span className="text-gray-400 text-sm">封面图片</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* 卡片信息 */}

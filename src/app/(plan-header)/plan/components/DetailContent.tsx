@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { ImagePlus, Calendar as CalendarIcon } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { toast } from "sonner";
+import { ImagePlus, Calendar as CalendarIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -10,178 +12,152 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { type DateRange } from "react-day-picker";
-import { format, differenceInDays, addDays, parse } from "date-fns";
+import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import type { TripSummary } from "@/types/trip";
+import { usePlaces } from "@/context/places-context";
+import { updateTripCover } from "@/actions/trip-cover";
+import ImagePickerDialog from "@/components/ImagePickerDialog";
 import TripHeaderCard from "./TripHeaderCard";
 import BookingCard from "./overview/BookingCard";
 import BudgetCard from "./overview/BudgetCard";
-import CollapsibleListItem from "./overview/CollapsibleListItem";
+import NotesList from "./overview/NotesList";
+import FlightsList from "./overview/FlightsList";
+import HotelsList from "./overview/HotelsList";
+import PlacesList from "./overview/PlacesList";
 import DayCard from "./itinerary/DayCard";
-
-interface Flight {
-  id: string;
-  from: string;
-  fromCity: string;
-  to: string;
-  toCity: string;
-  date: string;
-  departureTime: string;
-  arrivalTime: string;
-  flightNumber: string;
-}
-
-interface Hotel {
-  id: string;
-  name: string;
-  address: string;
-  checkIn: string;
-  checkOut: string;
-}
-
-interface Place {
-  id: string;
-  name: string;
-  address?: string;
-  location?: {
-    lng: number;
-    lat: number;
-  };
-}
 
 interface DetailContentProps {
   /** 来自数据库的行程快照 */
   trip?: TripSummary;
+  /** 滚动位置变化时上报：当前所在的大类 id（overview/itinerary/budget）与小标题锚点 id */
+  onActiveChange?: (active: { section: string; subId: string | null }) => void;
 }
 
-export default function DetailContent({ trip }: DetailContentProps) {
-  const overviewRef = useRef<HTMLDivElement>(null);
-  const itineraryRef = useRef<HTMLDivElement>(null);
-  const budgetRef = useRef<HTMLDivElement>(null);
+export default function DetailContent({
+  trip,
+  onActiveChange,
+}: DetailContentProps) {
+  const router = useRouter();
+  const contentRef = useRef<HTMLDivElement>(null);
+  const onActiveChangeRef = useRef(onActiveChange);
+  onActiveChangeRef.current = onActiveChange;
+  const lastActiveKeyRef = useRef("");
 
-  // 日期范围状态：优先用行程自带的起止日期初始化
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
-    const from = trip?.startDate
-      ? parse(trip.startDate, "yyyy-MM-dd", new Date())
-      : undefined;
-    const to = trip?.endDate
-      ? parse(trip.endDate, "yyyy-MM-dd", new Date())
-      : undefined;
-    return from && to ? { from, to } : undefined;
-  });
+  // 概览 / 行程 / 日期统一由 PlacesProvider + BookingsProvider 供给
+  const { items, placeLists, days, dateRange, setDateRange, addPlaceList } =
+    usePlaces();
 
-  const [lists, setLists] = useState([
-    { id: "1", title: "Notes", variant: "notes" as const, count: 0 },
-    { id: "2", title: "Flights", variant: "flights" as const, count: 0 },
-    {
-      id: "3",
-      title: "Hotels and lodging",
-      variant: "hotels" as const,
-      count: 0,
-    },
-    {
-      id: "4",
-      title: "Places to visit",
-      variant: "default" as const,
-      count: 0,
-    },
-  ]);
+  const [showImagePicker, setShowImagePicker] = useState(false);
 
-  // 航班和酒店状态
-  const [flights, setFlights] = useState<Flight[]>([]);
-  const [hotels, setHotels] = useState<Hotel[]>([]);
+  /**
+   * scrollspy：取滚动容器内一条"参考线"（顶部往下 140px），
+   * 看它落在哪个大节(section)、再落在该节里的哪个小标题(list/day)上。
+   * 参考线还停在最上方封面区时，兜底算概览。
+   */
+  const computeActive = useCallback(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    const line = root.getBoundingClientRect().top + 140;
+    const topOf = (id: string) =>
+      document.getElementById(id)?.getBoundingClientRect().top ?? Infinity;
 
-  // 概览地点状态 - 按列表 ID 存储
-  const [overviewPlaces, setOverviewPlaces] = useState<Record<string, Place[]>>({});
+    // 大类：最后一个顶线已越过参考线的 section（内容按 overview→itinerary→budget 排）
+    const sectionIds = ["overview", "itinerary", "budget"];
+    let section: string | null = null;
+    for (const s of sectionIds) {
+      if (topOf(s) <= line) section = s;
+    }
+    if (!section) section = "overview"; // 顶部封面/头部还没到 overview 顶线时也算概览
 
-  // 展开状态
-  const [expandedStates, setExpandedStates] = useState<Record<string, boolean>>({});
+    // 小标题：只在该大类内找（概览=list 锚点，行程=day 锚点，预算无小标题）
+    const subIds =
+      section === "overview"
+        ? [
+            "list-notes",
+            "list-flights",
+            "list-hotels",
+            ...placeLists.map((l) => `list-${l.id}`),
+          ]
+        : section === "itinerary"
+          ? days.map((d) => `day-${d.dayDate}`)
+          : [];
 
-  // 每日行程数据
-  const [dailyPlaces, setDailyPlaces] = useState<Record<number, Place[]>>({});
+    let subId: string | null = null;
+    let bestTop = -Infinity;
+    for (const id of subIds) {
+      const top = topOf(id);
+      if (top <= line && top > bestTop) {
+        bestTop = top;
+        subId = id;
+      }
+    }
 
-  const handleImageChange = () => {
-    // 后续实现图片选择逻辑
-    console.log("选择封面图片");
-  };
+    const key = `${section}||${subId ?? ""}`;
+    if (key !== lastActiveKeyRef.current) {
+      lastActiveKeyRef.current = key;
+      onActiveChangeRef.current?.({ section, subId });
+    }
+    // items 参与依赖：增删地点会改变各块高度，需在渲染后即时重算当前位置
+  }, [placeLists, days, items]);
 
-  const handleDeleteList = (id: string) => {
-    setLists(lists.filter((list) => list.id !== id));
-  };
-
-  const handleTitleChange = (id: string, newTitle: string) => {
-    setLists(
-      lists.map((list) =>
-        list.id === id ? { ...list, title: newTitle } : list,
-      ),
-    );
-  };
-
-  const handleAddList = () => {
-    const newList = {
-      id: Date.now().toString(),
-      title: "新列表",
-      variant: "default" as const,
-      count: 0,
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        computeActive();
+      });
     };
-    setLists([...lists, newList]);
-  };
+    computeActive();
+    root.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      root.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+    };
+  }, [computeActive]);
 
-  // 处理BookingCard图标点击
-  const handleBookingItemClick = (variant: "flights" | "hotels") => {
-    const element = document.getElementById(`list-${variant}`);
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
-      // 展开对应的CollapsibleListItem
-      setExpandedStates((prev) => ({ ...prev, [variant]: true }));
+  const handleImageChange = () => setShowImagePicker(true);
+
+  const handleImageSelect = async (result: { url?: string; data?: string }) => {
+    if (!trip?.id) return;
+    try {
+      await updateTripCover(trip.id, result);
+      toast.success("封面已更新");
+      router.refresh();
+      setShowImagePicker(false);
+    } catch (error) {
+      toast.error("更新失败，请重试");
+      console.error("Failed to update cover:", error);
     }
   };
 
-  // 处理添加地点
-  const handleAddPlace = (dayNumber: number, place: Place) => {
-    setDailyPlaces((prev) => ({
-      ...prev,
-      [dayNumber]: [...(prev[dayNumber] || []), place],
-    }));
-  };
-
-  // 处理删除地点
-  const handleDeletePlace = (dayNumber: number, placeId: string) => {
-    setDailyPlaces((prev) => ({
-      ...prev,
-      [dayNumber]: (prev[dayNumber] || []).filter((p) => p.id !== placeId),
-    }));
-  };
-
-  // 根据日期范围生成天数数组
-  const getDays = () => {
-    if (!dateRange?.from || !dateRange?.to) return [];
-
-    const days = differenceInDays(dateRange.to, dateRange.from) + 1;
-    return Array.from({ length: days }, (_, i) => ({
-      dayNumber: i + 1,
-      date: format(addDays(dateRange.from!, i), "M月d日", { locale: zhCN }),
-    }));
-  };
-
   return (
-    <div className="flex-1 overflow-y-auto bg-gray-50">
+    <div ref={contentRef} className="flex-1 overflow-y-auto bg-gray-50">
       {/* 背景图区域 */}
-      <div className="relative h-64 w-full bg-gradient-to-br from-orange-400 to-pink-400">
-        {/* 暂时用渐变色代替图片 */}
-        {/* <Image
-          src="/placeholder-trip.jpg"
-          alt="Trip background"
-          fill
-          className="object-cover"
-        /> */}
+      <div className="relative h-64 w-full">
+        {trip?.coverImageUrl || trip?.coverImageData ? (
+          <Image
+            src={trip.coverImageUrl || trip.coverImageData!}
+            alt={trip.name}
+            fill
+            className="object-cover"
+            priority
+          />
+        ) : (
+          <div className="w-full h-full bg-gradient-to-br from-orange-400 to-pink-400" />
+        )}
 
         {/* 右上角：更换图片按钮 */}
         <Button
           variant="ghost"
           size="icon"
-          className="absolute top-4 right-4 h-10 w-10 rounded-full bg-black/40 hover:bg-black/60 text-white"
+          className="absolute top-4 right-4 h-10 w-10 rounded-full bg-black/40 hover:bg-black/60 text-white z-10"
           onClick={handleImageChange}
           title="更换封面图片"
         >
@@ -189,7 +165,7 @@ export default function DetailContent({ trip }: DetailContentProps) {
         </Button>
 
         {/* 悬浮卡片 */}
-        <div className="absolute inset-x-0 bottom-0 translate-y-1/2 px-6">
+        <div className="absolute inset-x-0 bottom-0 translate-y-1/2 px-6 z-10">
           <TripHeaderCard
             dateRange={dateRange}
             onDateRangeChange={setDateRange}
@@ -201,58 +177,33 @@ export default function DetailContent({ trip }: DetailContentProps) {
       {/* 内容区域 - 给顶部留出空间 */}
       <div className="mt-24 px-6 pb-8 space-y-8">
         {/* 概览 */}
-        <section ref={overviewRef} id="overview" className="scroll-mt-4">
+        <section id="overview" className="scroll-mt-4">
           <h2 className="text-2xl font-bold mb-4 text-gray-900">概览</h2>
 
           {/* 顶部两个卡片 */}
           <div className="grid grid-cols-3 gap-4 mb-6">
             <div className="col-span-2">
-              <BookingCard
-                flightCount={flights.length}
-                hotelCount={hotels.length}
-                onItemClick={handleBookingItemClick}
-              />
+              <BookingCard />
             </div>
             <div className="col-span-1">
               <BudgetCard />
             </div>
           </div>
 
-          {/* 可折叠列表 */}
-          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-            {lists.map((list) => (
-              <CollapsibleListItem
-                key={list.id}
-                title={list.title}
-                variant={list.variant}
-                count={list.count}
-                onDelete={() => handleDeleteList(list.id)}
-                onTitleChange={(newTitle: string) =>
-                  handleTitleChange(list.id, newTitle)
-                }
-                flights={list.variant === "flights" ? flights : undefined}
-                hotels={list.variant === "hotels" ? hotels : undefined}
-                places={list.variant === "default" ? overviewPlaces[list.id] : undefined}
-                onFlightsChange={list.variant === "flights" ? setFlights : undefined}
-                onHotelsChange={list.variant === "hotels" ? setHotels : undefined}
-                onPlacesChange={
-                  list.variant === "default"
-                    ? (places) =>
-                        setOverviewPlaces((prev) => ({ ...prev, [list.id]: places }))
-                    : undefined
-                }
-                isExpanded={expandedStates[list.variant]}
-                onExpandChange={(expanded) =>
-                  setExpandedStates((prev) => ({ ...prev, [list.variant]: expanded }))
-                }
-              />
+          {/* 列表区：Notes / Flights / Hotels / 各地点列表 */}
+          <div className="bg-white rounded-lg shadow-sm overflow-hidden divide-y divide-gray-100">
+            <NotesList />
+            <FlightsList />
+            <HotelsList />
+            {placeLists.map((list) => (
+              <PlacesList key={list.id} list={list} />
             ))}
           </div>
 
           {/* 新建列表按钮 */}
           <Button
             variant="link"
-            onClick={handleAddList}
+            onClick={() => addPlaceList()}
             className="w-full mt-4 py-3 text-orange-600 hover:text-orange-700 font-medium h-auto"
           >
             + 新列表
@@ -260,7 +211,7 @@ export default function DetailContent({ trip }: DetailContentProps) {
         </section>
 
         {/* 行程 */}
-        <section ref={itineraryRef} id="itinerary" className="scroll-mt-4">
+        <section id="itinerary" className="scroll-mt-4">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-2xl font-bold text-gray-900">行程</h2>
             {/* 日期修改按钮 */}
@@ -292,21 +243,17 @@ export default function DetailContent({ trip }: DetailContentProps) {
             </Popover>
           </div>
           <div className="space-y-4">
-            {getDays().map(({ dayNumber, date }) => (
-              <DayCard
-                key={dayNumber}
-                dayNumber={dayNumber}
-                date={date}
-                places={dailyPlaces[dayNumber] || []}
-                onAddPlace={handleAddPlace}
-                onDeletePlace={handleDeletePlace}
-              />
+            {days.map((day) => (
+              // id 供侧边栏"行程"小标题滚动与 scrollspy 定位（与大标题同规格的锚点）
+              <div key={day.dayDate} id={`day-${day.dayDate}`} className="scroll-mt-4">
+                <DayCard day={day} />
+              </div>
             ))}
           </div>
         </section>
 
         {/* 预算 */}
-        <section ref={budgetRef} id="budget" className="scroll-mt-4">
+        <section id="budget" className="scroll-mt-4">
           <h2 className="text-2xl font-bold mb-4 text-gray-900">预算</h2>
           <div className="bg-white rounded-lg p-6 shadow-sm">
             <div className="mb-6">
@@ -330,6 +277,14 @@ export default function DetailContent({ trip }: DetailContentProps) {
           </div>
         </section>
       </div>
+
+      {/* 图片选择器弹窗 */}
+      <ImagePickerDialog
+        open={showImagePicker}
+        onOpenChange={setShowImagePicker}
+        onSelect={handleImageSelect}
+        destinationName={trip?.destination?.name}
+      />
     </div>
   );
 }

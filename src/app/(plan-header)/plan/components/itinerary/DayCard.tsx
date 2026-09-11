@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MapPin, MoreHorizontal } from "lucide-react";
+import { MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,53 +10,42 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import PlaceSearchInput from "@/components/PlaceSearchInput";
-import { PlaceSearchResult } from "@/hooks/usePlaceSearch";
+import type { PlaceSearchResult } from "@/hooks/usePlaceSearch";
+import type { PlaceItemInput } from "@/types/place";
+import type { DayInfo } from "@/context/places-context";
+import { usePlaces } from "@/context/places-context";
+import { buildGroupKey } from "@/lib/place-groups";
+import { canDragPlace } from "@/lib/place-kinds";
+import PlaceCard from "../PlaceCard";
+import { PlaceDayGap } from "../PlaceGap";
+import SortableCardGroup from "@/components/SortableCardGroup";
 
-export interface Place {
-  id: string;
-  name: string;
-  address?: string;
-  location?: {
-    lng: number;
-    lat: number;
-  };
-}
-
-interface DayCardProps {
-  dayNumber: number;
-  date: string;
-  places?: Place[];
-  onAddPlace?: (dayNumber: number, place: Place) => void;
-  onDeletePlace?: (dayNumber: number, placeId: string) => void;
-}
-
-export default function DayCard({
-  dayNumber,
-  date,
-  places = [],
-  onAddPlace,
-  onDeletePlace,
-}: DayCardProps) {
+/** 行程里的"一天"：壳 + Day N 标题 + 挂到该天(day_date)的 PlaceCard + 搜索添加 */
+export default function DayCard({ day }: { day: DayInfo }) {
+  const { dayItemsByDate, addItem, deleteItem, reorderItems } = usePlaces();
   const [isAddingPlace, setIsAddingPlace] = useState(false);
 
-  // 处理地点选择
-  const handlePlaceSelect = (placeResult: PlaceSearchResult) => {
-    if (onAddPlace) {
-      const place: Place = {
-        id: placeResult.id,
-        name: placeResult.name,
-        address: placeResult.address,
-        location: placeResult.location,
-      };
-      onAddPlace(dayNumber, place);
-      setIsAddingPlace(false);
-    }
+  const places = dayItemsByDate(day.dayDate);
+
+  const handlePlaceSelect = (result: PlaceSearchResult) => {
+    const input: PlaceItemInput = {
+      groupKey: buildGroupKey(result),
+      name: result.name,
+      address: result.address ?? null,
+      tel: result.tel ?? null,
+      type: result.type ?? null,
+      photo: result.photo ?? null,
+      lng: result.location?.lng ?? null,
+      lat: result.location?.lat ?? null,
+    };
+    addItem(input, { kind: "day", dayDate: day.dayDate });
+    setIsAddingPlace(false);
   };
 
   return (
     <div className="bg-white rounded-lg p-6 shadow-sm">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="font-semibold text-lg">Day {dayNumber}</h3>
+        <h3 className="font-semibold text-lg">Day {day.dayNumber}</h3>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -72,28 +61,35 @@ export default function DayCard({
         </DropdownMenu>
       </div>
 
-      <p className="text-sm text-gray-500 mb-4">{date}</p>
+      <p className="text-sm text-gray-500 mb-4">{day.label}</p>
 
-      {/* 已添加的地点列表 */}
+      {/* 已排入当天的地点 */}
       {places.length > 0 && (
-        <div className="space-y-2 mb-4">
-          {places.map((place) => (
-            <div
-              key={place.id}
-              className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 group"
-            >
-              <MapPin className="h-4 w-4 text-gray-400 flex-shrink-0" />
-              <span className="flex-1 text-sm text-gray-700">{place.name}</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                onClick={() => onDeletePlace?.(dayNumber, place.id)}
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </div>
-          ))}
+        <div className="mb-4">
+          {/* 拖动排序只在本天内生效（position 按 day 容器重写） */}
+          <SortableCardGroup
+            ids={places.map((item) => item.id)}
+            onReorder={reorderItems}
+            onDelete={deleteItem}
+            deleteTitle="从这天移除"
+            // 酒店卡按入住/退房逻辑固定在当天首/尾，不给拖动柄
+            canDrag={(id) => {
+              const it = places.find((p) => p.id === id);
+              return it ? canDragPlace(it) : false;
+            }}
+            // 卡与卡之间：靠左一条竖向点线把当天行程"串"起来，靠右一行这段路的
+            // 交通方式/耗时/距离 + 「路线」（间隔的起点 = 上一张卡，终点 = 下面这张卡）
+            renderGap={(beforeId, index, dragging) => {
+              const to = places.find((p) => p.id === beforeId);
+              const from = places[index - 1];
+              if (!from || !to) return null;
+              return <PlaceDayGap from={from} to={to} dragging={dragging} />;
+            }}
+            renderItem={(id) => {
+              const item = places.find((it) => it.id === id);
+              return item ? <PlaceCard item={item} /> : null;
+            }}
+          />
         </div>
       )}
 

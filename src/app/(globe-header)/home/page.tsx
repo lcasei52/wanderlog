@@ -14,6 +14,8 @@ export default async function HomePage() {
       startDate: trips.startDate,
       endDate: trips.endDate,
       destinationName: trips.destinationName,
+      coverImageUrl: trips.coverImageUrl,
+      coverImageData: trips.coverImageData,
     })
     .from(trips)
     .orderBy(desc(trips.createdAt)); // 新创建的排前面
