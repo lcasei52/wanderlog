@@ -9,7 +9,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import UndoRedoButtons from "./UndoRedoButtons";
 import ShareButton from "./ShareButton";
 import MoreOptionsMenu from "./MoreOptionsMenu";
 import { useState } from "react";
@@ -28,7 +27,7 @@ export default function PlanHeader() {
           <Map className="h-6 w-6" />
         </Link>
         <div className="h-6 w-px bg-gray-300" />
-        <UndoRedoButtons />
+        <div id="undo-redo-slot" />
       </div>
 
       {/* 右侧 */}

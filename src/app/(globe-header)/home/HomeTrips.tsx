@@ -79,8 +79,10 @@ export default function HomeTrips({ trips }: { trips: HomeTrip[] }) {
   useEffect(() => {
     const updateItemsPerPage = () => {
       const width = window.innerWidth;
-      if (width < 768) setItemsPerPage(2); // 小屏
-      else if (width < 1024) setItemsPerPage(3); // 中屏
+      if (width < 768)
+        setItemsPerPage(2); // 小屏
+      else if (width < 1024)
+        setItemsPerPage(3); // 中屏
       else setItemsPerPage(4); // 大屏
     };
     updateItemsPerPage();
@@ -99,7 +101,9 @@ export default function HomeTrips({ trips }: { trips: HomeTrip[] }) {
       ? tripsState
           .filter((t) => !t.endDate || t.endDate >= todayStr())
           .sort((a, b) =>
-            (a.startDate ?? "9999-12-31").localeCompare(b.startDate ?? "9999-12-31"),
+            (a.startDate ?? "9999-12-31").localeCompare(
+              b.startDate ?? "9999-12-31",
+            ),
           )
       : tripsState;
 
@@ -160,7 +164,9 @@ export default function HomeTrips({ trips }: { trips: HomeTrip[] }) {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900">
-                <span>{viewMode === "recent" ? "最近创建" : "即将到来的旅行"}</span>
+                <span>
+                  {viewMode === "recent" ? "最近创建" : "即将到来的旅行"}
+                </span>
                 <ChevronDown className="h-4 w-4" />
               </button>
             </DropdownMenuTrigger>
@@ -210,7 +216,10 @@ export default function HomeTrips({ trips }: { trips: HomeTrip[] }) {
                     key={trip.id}
                     className="group relative bg-white rounded-lg border hover:shadow-lg transition-shadow overflow-hidden"
                   >
-                    <Link href={`/plan/${trip.id}`} className="block cursor-pointer">
+                    <Link
+                      href={`/plan/${trip.id}`}
+                      className="block cursor-pointer"
+                    >
                       {/* 卡片图片区域 */}
                       <div className="relative aspect-[4/3]">
                         {trip.coverImageUrl || trip.coverImageData ? (
@@ -223,7 +232,9 @@ export default function HomeTrips({ trips }: { trips: HomeTrip[] }) {
                           />
                         ) : (
                           <div className="w-full h-full bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center">
-                            <span className="text-gray-400 text-sm">封面图片</span>
+                            <span className="text-gray-400 text-sm">
+                              封面图片
+                            </span>
                           </div>
                         )}
                       </div>
@@ -235,7 +246,9 @@ export default function HomeTrips({ trips }: { trips: HomeTrip[] }) {
                         </h3>
                         <div className="flex items-center gap-2 text-sm text-gray-600">
                           {trip.destinationName ? (
-                            <span className="text-orange-600">{trip.destinationName}</span>
+                            <span className="text-orange-600">
+                              {trip.destinationName}
+                            </span>
                           ) : null}
                           <span>{rangeText(trip)}</span>
                         </div>
@@ -280,7 +293,9 @@ export default function HomeTrips({ trips }: { trips: HomeTrip[] }) {
                   {currentPage > 0 && (
                     <div className="absolute -left-12 top-1/2 -translate-y-1/2">
                       <button
-                        onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+                        onClick={() =>
+                          setCurrentPage((p) => Math.max(0, p - 1))
+                        }
                         className="h-10 w-10 rounded-full bg-white border shadow-sm flex items-center justify-center hover:bg-gray-50 transition-all"
                         aria-label="上一页"
                       >
@@ -344,7 +359,8 @@ export default function HomeTrips({ trips }: { trips: HomeTrip[] }) {
           <DialogHeader>
             <DialogTitle>删除这个行程？</DialogTitle>
             <DialogDescription>
-              将删除「{deletingTrip?.name}」及其中的列表、每日行程、航班酒店等内容，此操作无法撤销。
+              将删除「{deletingTrip?.name}
+              」及其中的列表、每日行程、航班酒店等内容，此操作无法撤销。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

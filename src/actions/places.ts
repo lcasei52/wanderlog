@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db/client";
 import {
@@ -311,4 +311,85 @@ export async function deletePlaceList(listId: string): Promise<void> {
     });
   }
   revalidatePath(`/plan/${existing.tripId}`);
+}
+
+/* ============================================================
+ * Undo / Redo：整体快照同步
+ * ============================================================ */
+
+export interface PlacesSnapshot {
+  items: PlaceItem[];
+  lists: List[];
+}
+
+/**
+ * 把 trip 的 items + lists 整体替换为快照里的状态。
+ */
+export async function syncPlacesSnapshot(
+  tripId: string,
+  snapshot: PlacesSnapshot,
+): Promise<void> {
+  const db = getDb();
+
+  // ---- lists ----
+  const snapListIds = snapshot.lists.map((l) => l.id);
+  const existingLists = await db
+    .select({ id: lists.id })
+    .from(lists)
+    .where(eq(lists.tripId, tripId));
+  const toDeleteLists = existingLists
+    .filter((l) => !snapListIds.includes(l.id))
+    .map((l) => l.id);
+  if (toDeleteLists.length > 0) {
+    await db.delete(lists).where(inArray(lists.id, toDeleteLists));
+  }
+  const sortedLists = [...snapshot.lists].sort((a, b) => b.position - a.position);
+  for (const l of sortedLists) {
+    await db
+      .insert(lists)
+      .values({ id: l.id, tripId, title: l.title, position: l.position })
+      .onConflictDoUpdate({
+        target: lists.id,
+        set: { title: l.title, position: l.position },
+      });
+  }
+
+  // ---- place_items ----
+  const snapItemIds = snapshot.items.map((it) => it.id);
+  const existingItems = await db
+    .select({ id: placeItems.id })
+    .from(placeItems)
+    .where(eq(placeItems.tripId, tripId));
+  const toDeleteItems = existingItems
+    .filter((it) => !snapItemIds.includes(it.id))
+    .map((it) => it.id);
+  if (toDeleteItems.length > 0) {
+    await db.delete(placeItems).where(inArray(placeItems.id, toDeleteItems));
+  }
+  for (const it of snapshot.items) {
+    await db
+      .insert(placeItems)
+      .values({
+        id: it.id, tripId,
+        groupKey: it.groupKey, sourceKind: it.sourceKind, sourceId: it.sourceId,
+        name: it.name, address: it.address, tel: it.tel, type: it.type,
+        photo: it.photo, lng: it.lng, lat: it.lat,
+        listId: it.listId, dayDate: it.dayDate, position: it.position,
+        note: it.note, timeFrom: it.timeFrom, timeTo: it.timeTo,
+        url: it.url, visited: it.visited, routeModeToNext: it.routeModeToNext,
+      })
+      .onConflictDoUpdate({
+        target: placeItems.id,
+        set: {
+          groupKey: it.groupKey, sourceKind: it.sourceKind, sourceId: it.sourceId,
+          name: it.name, address: it.address, tel: it.tel, type: it.type,
+          photo: it.photo, lng: it.lng, lat: it.lat,
+          listId: it.listId, dayDate: it.dayDate, position: it.position,
+          note: it.note, timeFrom: it.timeFrom, timeTo: it.timeTo,
+          url: it.url, visited: it.visited, routeModeToNext: it.routeModeToNext,
+        },
+      });
+  }
+
+  revalidatePath(`/plan/${tripId}`);
 }

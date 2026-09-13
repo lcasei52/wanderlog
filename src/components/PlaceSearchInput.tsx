@@ -13,6 +13,7 @@ interface PlaceSearchInputProps {
   onPlaceSelect: (place: PlaceSearchResult) => void;
   onCancel?: () => void;
   className?: string;
+  autoFocus?: boolean;
 }
 
 /**
@@ -25,6 +26,7 @@ export default function PlaceSearchInput({
   onPlaceSelect,
   onCancel,
   className,
+  autoFocus = false,
 }: PlaceSearchInputProps) {
   const [showDropdown, setShowDropdown] = useState(false);
   const [pos, setPos] = useState<{
@@ -41,8 +43,10 @@ export default function PlaceSearchInput({
 
   // 自动聚焦输入框
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    if (autoFocus) {
+      inputRef.current?.focus();
+    }
+  }, [autoFocus]);
 
   // 选择地点
   const handleSelectPlace = (place: PlaceSearchResult) => {

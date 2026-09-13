@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, Minus, Plus } from "lucide-react";
+import {
+  ChevronUp,
+  Layers,
+  Locate,
+  Maximize,
+  Minus,
+  Plus,
+} from "lucide-react";
 import { useAMap, type MapMarker } from "@/hooks/useAMap";
 import { usePlaces } from "@/context/places-context";
 import { useRoutes } from "@/context/routes-context";
@@ -17,6 +24,12 @@ import { placeKindOf } from "@/lib/place-kinds";
 import { dayLayerKey, listLayerKey } from "@/types/place";
 import { saveHiddenLayers } from "@/actions/trips";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { getColorByListId } from "@/lib/colors";
 import MapLayerSelector from "./MapLayerSelector";
 import PlaceDetailCard from "./PlaceDetailCard";
 
@@ -68,6 +81,7 @@ export default function MapView({
     error,
     updateMarkers,
     fitAll,
+    fitPoints,
     fitPath,
     setRoutePaths,
     zoomToPlace,
@@ -330,35 +344,9 @@ export default function MapView({
   }, [map, destinationCenter, hasAnyVisible]);
 
   return (
-    <div className="absolute inset-0 bg-gray-100">
+    <div className="absolute inset-0 bg-gray-100 overflow-hidden">
       {/* 地图容器 */}
       <div ref={mapRef} className="w-full h-full" />
-
-      {/* 缩放 +/-（替代 AMap.ToolBar：原控件会触发 Pixel(NaN,NaN) 异常风暴） */}
-      {map && (
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-1 z-20">
-          <Button
-            variant="secondary"
-            size="icon"
-            className="h-9 w-9 rounded-lg shadow-lg bg-white hover:bg-gray-50"
-            aria-label="放大地图"
-            title="放大"
-            onClick={() => map.zoomIn?.()}
-          >
-            <Plus className="h-5 w-5" />
-          </Button>
-          <Button
-            variant="secondary"
-            size="icon"
-            className="h-9 w-9 rounded-lg shadow-lg bg-white hover:bg-gray-50"
-            aria-label="缩小地图"
-            title="缩小"
-            onClick={() => map.zoomOut?.()}
-          >
-            <Minus className="h-5 w-5" />
-          </Button>
-        </div>
-      )}
 
       {/* 图层选择器按钮 */}
       <Button
@@ -386,6 +374,114 @@ export default function MapView({
         showRoutes={showRoutes}
         onToggleRoutes={() => setShowRoutes((v) => !v)}
       />
+
+      {/* ---- 底部控件栏 ---- */}
+      {map && (
+        <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between z-20 pointer-events-none">
+          {/* 左：调整地图以适应 */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="secondary"
+                className="pointer-events-auto h-9 rounded-full bg-white/80 backdrop-blur hover:bg-white shadow-lg text-sm font-medium text-gray-700 gap-1.5 px-4"
+              >
+                <Maximize className="h-4 w-4" />
+                调整地图以适应...
+                <ChevronUp className="h-3.5 w-3.5 text-gray-400" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              side="top"
+              align="start"
+              sideOffset={8}
+              className="w-56 p-1.5"
+            >
+              <button
+                type="button"
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm hover:bg-gray-100 transition-colors"
+                onClick={() => fitAll()}
+              >
+                <span className="h-2.5 w-2.5 rounded-full bg-gray-400 shrink-0" />
+                所有地点
+              </button>
+              {placeLists.map((l, idx) => {
+                const pts = items
+                  .filter((it) => it.listId === l.id && it.lng != null && it.lat != null)
+                  .map((it) => [it.lng!, it.lat!] as [number, number]);
+                return (
+                  <button
+                    key={l.id}
+                    type="button"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm hover:bg-gray-100 transition-colors"
+                    disabled={pts.length === 0}
+                    onClick={() => { if (pts.length > 0) fitPoints(pts); }}
+                  >
+                    <span
+                      className="h-2.5 w-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: getColorByListId(l.id) }}
+                    />
+                    <span className="truncate">{l.title}</span>
+                  </button>
+                );
+              })}
+              {days.map((d) => {
+                const pts = items
+                  .filter((it) => it.dayDate === d.dayDate && it.lng != null && it.lat != null)
+                  .map((it) => [it.lng!, it.lat!] as [number, number]);
+                return (
+                  <button
+                    key={d.dayDate}
+                    type="button"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm hover:bg-gray-100 transition-colors"
+                    disabled={pts.length === 0}
+                    onClick={() => { if (pts.length > 0) fitPoints(pts); }}
+                  >
+                    <span
+                      className="h-2.5 w-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: getColorByListId(`day-${d.dayDate}`) }}
+                    />
+                    <span className="truncate">Day {d.dayNumber} · {d.label}</span>
+                  </button>
+                );
+              })}
+            </PopoverContent>
+          </Popover>
+
+          {/* 右：缩放控件 */}
+          <div className="pointer-events-auto flex flex-col rounded-lg overflow-hidden shadow-lg">
+            <Button
+              variant="secondary"
+              size="icon"
+              className="h-9 w-9 rounded-none bg-white/80 backdrop-blur hover:bg-white border-b border-gray-200"
+              aria-label="定位到当前位置"
+              title="定位到当前位置"
+              disabled
+            >
+              <Locate className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="secondary"
+              size="icon"
+              className="h-9 w-9 rounded-none bg-white/80 backdrop-blur hover:bg-white border-b border-gray-200"
+              aria-label="放大"
+              title="放大"
+              onClick={() => map.zoomIn?.()}
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="secondary"
+              size="icon"
+              className="h-9 w-9 rounded-none bg-white/80 backdrop-blur hover:bg-white"
+              aria-label="缩小"
+              title="缩小"
+              onClick={() => map.zoomOut?.()}
+            >
+              <Minus className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* 底部悬浮：地点详情卡（含导航/缩放工具条） */}
       <PlaceDetailCard zoomToPlace={zoomToPlace} />

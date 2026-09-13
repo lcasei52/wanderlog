@@ -28,8 +28,8 @@ export const AUTO_PLACE_COLORS: Record<
   AutoPlaceKind,
   { bg: string; fg: string }
 > = {
-  flight: { bg: "#DBEAFE", fg: "#2563EB" }, // blue-100 / blue-600
-  hotel: { bg: "#EDE9FE", fg: "#7C3AED" }, // violet-100 / violet-600
+  flight: { bg: "#3B82F6", fg: "#ffffff" }, // blue-500 / white
+  hotel: { bg: "#8B5CF6", fg: "#ffffff" }, // violet-500 / white
 };
 
 /**
@@ -42,17 +42,11 @@ export const AUTO_PLACE_ICON_PATHS: Record<AutoPlaceKind, string[]> = {
     "M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z",
   ],
   hotel: [
-    // lucide Hotel 的 <rect x=4 y=2 w=16 h=20 rx=2/> 展开成 path
-    "M6 2H18a2 2 0 0 1 2 2V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z",
-    "M10 22v-6.57",
-    "M12 7h.01",
-    "M12 11h.01",
-    "M14 15.43V22",
-    "M15 16a5 5 0 0 0-6 0",
-    "M16 7h.01",
-    "M16 11h.01",
-    "M8 7h.01",
-    "M8 11h.01",
+    // lucide Bed
+    "M2 4v16",
+    "M2 8h18a2 2 0 0 1 2 2v10",
+    "M2 17h20",
+    "M6 8v9",
   ],
 };
 

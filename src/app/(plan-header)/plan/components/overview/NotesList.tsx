@@ -20,7 +20,7 @@ export default function NotesList() {
     >
       <Textarea
         placeholder="在此处撰写或粘贴任何内容：如何出行，提示和技巧"
-        className="min-h-[120px] resize-none border-gray-200 focus-visible:border-orange-300"
+        className="min-h-[30px] resize-none border-gray-200 focus-visible:border-orange-300"
       />
     </ListShell>
   );

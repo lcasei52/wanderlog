@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -30,6 +31,7 @@ import {
   deletePlaceList as deletePlaceListAction,
   renamePlaceList as renamePlaceListAction,
   reorderPlaceItems as reorderPlaceItemsAction,
+  syncPlacesSnapshot,
   updatePlaceItem as updatePlaceItemAction,
 } from "@/actions/places";
 
@@ -100,6 +102,12 @@ export interface PlacesContextValue {
   selectItem: (id: string) => void;
   clearSelection: () => void;
   setDateRange: (range: DateRange | undefined) => void;
+
+  // Undo / Redo
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 const PlacesContext = createContext<PlacesContextValue | null>(null);
@@ -165,6 +173,53 @@ export function PlacesProvider({
   });
 
   const days = useMemo(() => buildDays(dateRange), [dateRange]);
+
+  // ---- Undo / Redo 历史栈 ----
+  const MAX_HISTORY = 50;
+  type Snapshot = { items: PlaceItem[]; placeLists: PlaceListRow[] };
+  const pastRef = useRef<Snapshot[]>([]);
+  const futureRef = useRef<Snapshot[]>([]);
+  const [historyVersion, setHistoryVersion] = useState(0);
+
+  const pushSnapshot = useCallback(() => {
+    pastRef.current = [
+      ...pastRef.current.slice(-(MAX_HISTORY - 1)),
+      { items, placeLists },
+    ];
+    futureRef.current = [];
+    setHistoryVersion((v) => v + 1);
+  }, [items, placeLists]);
+
+  const undo = useCallback(() => {
+    const past = pastRef.current;
+    if (past.length === 0) return;
+    const snap = past[past.length - 1];
+    pastRef.current = past.slice(0, -1);
+    futureRef.current = [...futureRef.current, { items, placeLists }];
+    setItems(snap.items);
+    setPlaceLists(snap.placeLists);
+    setHistoryVersion((v) => v + 1);
+    syncPlacesSnapshot(tripId, { items: snap.items, lists: snap.placeLists }).catch(
+      (err) => console.error("undo 同步失败:", err),
+    );
+  }, [items, placeLists, tripId]);
+
+  const redo = useCallback(() => {
+    const future = futureRef.current;
+    if (future.length === 0) return;
+    const snap = future[future.length - 1];
+    futureRef.current = future.slice(0, -1);
+    pastRef.current = [...pastRef.current, { items, placeLists }];
+    setItems(snap.items);
+    setPlaceLists(snap.placeLists);
+    setHistoryVersion((v) => v + 1);
+    syncPlacesSnapshot(tripId, { items: snap.items, lists: snap.placeLists }).catch(
+      (err) => console.error("redo 同步失败:", err),
+    );
+  }, [items, placeLists, tripId]);
+
+  const canUndo = pastRef.current.length > 0;
+  const canRedo = futureRef.current.length > 0;
 
   /** 按容器分组的排序结果（map 缓存，list/day 都走 keyOf） */
   const containerGroups = useMemo(() => {
@@ -256,6 +311,7 @@ export function PlacesProvider({
       container: PlaceContainer,
       opts?: { select?: boolean; atStart?: boolean },
     ) => {
+      pushSnapshot();
       try {
         const row = await addPlaceItem(tripId, container, input, {
           atStart: opts?.atStart,
@@ -271,11 +327,12 @@ export function PlacesProvider({
         return null;
       }
     },
-    [tripId, selectItem],
+    [tripId, selectItem, pushSnapshot],
   );
 
   const copyItemTo = useCallback(
     async (itemId: string, container: PlaceContainer) => {
+      pushSnapshot();
       try {
         const row = await copyPlaceItem(itemId, container);
         if (row) setItems((prev) => [...prev, row]);
@@ -285,11 +342,12 @@ export function PlacesProvider({
         return null;
       }
     },
-    [],
+    [pushSnapshot],
   );
 
   const deleteItem = useCallback(
     async (id: string) => {
+      pushSnapshot();
       try {
         await deletePlaceItemAction(id);
         setItems((prev) => prev.filter((it) => it.id !== id));
@@ -298,7 +356,7 @@ export function PlacesProvider({
         console.error("删除地点失败:", err);
       }
     },
-    [],
+    [pushSnapshot],
   );
 
   const removeItemsBySource = useCallback(
@@ -319,6 +377,7 @@ export function PlacesProvider({
 
   const updateItem = useCallback(
     async (id: string, patch: PlaceItemPatch) => {
+      pushSnapshot();
       try {
         const row = await updatePlaceItemAction(id, patch);
         if (row) {
@@ -328,13 +387,13 @@ export function PlacesProvider({
         console.error("更新地点失败:", err);
       }
     },
-    [],
+    [pushSnapshot],
   );
 
   const reorderItems = useCallback(
     async (orderedIds: string[]) => {
+      pushSnapshot();
       const order = new Map(orderedIds.map((id, i) => [id, i]));
-      // 乐观更新：先把 position 改成下标，containerGroups 会按 byPosition 重排
       setItems((prev) =>
         prev.map((it) =>
           order.has(it.id) ? { ...it, position: order.get(it.id)! } : it,
@@ -346,11 +405,12 @@ export function PlacesProvider({
         console.error("地点排序失败:", err);
       }
     },
-    [tripId],
+    [tripId, pushSnapshot],
   );
 
   const addPlaceList = useCallback(
     async (title?: string) => {
+      pushSnapshot();
       try {
         const row = await addPlaceListAction(tripId, title);
         if (row) setPlaceLists((prev) => [...prev, row]);
@@ -360,10 +420,11 @@ export function PlacesProvider({
         return null;
       }
     },
-    [tripId],
+    [tripId, pushSnapshot],
   );
 
   const renamePlaceList = useCallback(async (listId: string, title: string) => {
+    pushSnapshot();
     try {
       const row = await renamePlaceListAction(listId, title);
       if (row) {
@@ -372,9 +433,10 @@ export function PlacesProvider({
     } catch (err) {
       console.error("重命名列表失败:", err);
     }
-  }, []);
+  }, [pushSnapshot]);
 
   const deletePlaceList = useCallback(async (listId: string) => {
+    pushSnapshot();
     try {
       await deletePlaceListAction(listId);
       setPlaceLists((prev) => prev.filter((l) => l.id !== listId));
@@ -382,7 +444,7 @@ export function PlacesProvider({
     } catch (err) {
       console.error("删除列表失败:", err);
     }
-  }, []);
+  }, [pushSnapshot]);
 
   const value = useMemo<PlacesContextValue>(
     () => ({
@@ -415,6 +477,10 @@ export function PlacesProvider({
       selectItem,
       clearSelection,
       setDateRange,
+      undo,
+      redo,
+      canUndo,
+      canRedo,
     }),
     [
       tripId,
@@ -446,6 +512,11 @@ export function PlacesProvider({
       selectItem,
       clearSelection,
       setDateRange,
+      undo,
+      redo,
+      canUndo,
+      canRedo,
+      historyVersion,
     ],
   );
 

@@ -69,7 +69,7 @@ export interface MapMarker {
 }
 
 /**
- * 机场/酒店 marker 的内芯：淡色底上画同色系线描图标（与卡片上的 lucide 图标同一份路径）。
+ * 机场/酒店 marker 的内芯：白色线描图标画在实色底上。
  * lucide 是 24×24，缩到 ~15px 再居中到 teardrop 圆头的中心 (12.5, 12)。
  */
 function autoPlaceIconSvg(kind: AutoPlaceKind, fg: string): string {
@@ -83,8 +83,7 @@ function autoPlaceIconSvg(kind: AutoPlaceKind, fg: string): string {
 
 /**
  * 生成一个 marker 的 teardrop icon。
- * 手动地点：编号直接画在内部（visited 时画灰色 + 勾）；
- * 机场/酒店：淡蓝/淡紫底 + 蓝色飞机 / 紫色房子，不带数字（见 place-kinds.ts）。
+ * 统一白色边框；手动地点=实色底+白色序号；flight/hotel=实色底+白色图标。
  * emphasized = 选中放大（1.35x），viewBox 固定缩放，内部图形随之放大。
  */
 function teardropIcon(amap: any, marker: MapMarker): any {
@@ -103,18 +102,21 @@ function teardropIcon(amap: any, marker: MapMarker): any {
     innerContent = `<text x="12.5" y="16" text-anchor="middle" fill="white" font-size="12" font-weight="700">${marker.label}</text>`;
   }
 
-  // 自动生成的两类用淡色底，浅色在浅底地图上容易糊掉 → 描一圈同色深色边
-  const outline = auto ? ` stroke="${fg}" stroke-width="1.5"` : "";
+  const shadow = marker.emphasized
+    ? `<filter id="s"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.3"/></filter>`
+    : "";
+  const filterAttr = marker.emphasized ? ' filter="url(#s)"' : "";
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${25 * k}" height="${34 * k}" viewBox="0 0 25 34">
-    <path fill="${bg}"${outline} d="M12.5,0 C5.6,0 0,5.6 0,12.5 C0,21.9 12.5,34 12.5,34 C12.5,34 25,21.9 25,12.5 C25,5.6 19.4,0 12.5,0 Z"/>
+    ${shadow ? `<defs>${shadow}</defs>` : ""}
+    <path${filterAttr} fill="${bg}" stroke="white" stroke-width="2" d="M12.5,1 C6.15,1 1,6.15 1,12.5 C1,21.4 12.5,33 12.5,33 C12.5,33 24,21.4 24,12.5 C24,6.15 18.85,1 12.5,1 Z"/>
     ${innerContent}
   </svg>`;
   return new amap.Icon({
     size: new amap.Size(25 * k, 34 * k),
     image: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
     imageSize: new amap.Size(25 * k, 34 * k),
-    anchor: new amap.Pixel(12.5 * k, 34 * k), // 锚点在底部中心
+    anchor: new amap.Pixel(12.5 * k, 34 * k),
   });
 }
 
@@ -124,16 +126,15 @@ function labelContent(color: string, text: string, emphasized?: boolean): string
   const fontSize = emphasized ? "13px" : "12px";
   const shadow = emphasized
     ? "box-shadow: 0 2px 8px rgba(0,0,0,0.25);"
-    : "box-shadow: 0 1px 3px rgba(0,0,0,0.2);";
-  return `<div style="background-color: ${color}; color: white; padding: ${pad}; border-radius: 999px; font-size: ${fontSize}; font-weight: 700; line-height: 1; ${shadow}">${text}</div>`;
+    : "box-shadow: 0 1px 3px rgba(0,0,0,0.15);";
+  return `<div style="background-color: ${color}; color: white; padding: ${pad}; border-radius: 999px; font-size: ${fontSize}; font-weight: 700; line-height: 1; border: 2px solid white; ${shadow}">${text}</div>`;
 }
 
 export function useAMap(options: UseAMapOptions = {}) {
   const mapRef = useRef<HTMLDivElement>(null);
-  // 高德 loader 未提供全局 AMap 命名空间类型，这里用 any
   const amapNsRef = useRef<any>(null);
   const mapInstanceRef = useRef<any>(null);
-  const markersRef = useRef<any[]>([]);
+  const markersRef = useRef<Map<string, { inst: any; fp: string }>>(new Map());
   // 当前画在地图上的路线折线（同一时刻最多一条，换模式/隐藏时整条替换）
   const routeRef = useRef<any[]>([]);
   // 保留 map 的 React state：仅供消费方判断"地图已就绪"（其余操作走 ref，避免闭包过期）
@@ -172,9 +173,11 @@ export function useAMap(options: UseAMapOptions = {}) {
         // 会让 AMap 在图片 onload 重排时用未初始化的投影计算 → Pixel(NaN,NaN) 报错串）
         const mapInstance = new AMap.Map(mapRef.current, {
           zoom: options.zoom || 10,
-          center: options.center || [116.397428, 39.90923], // 默认北京
+          center: options.center || [116.397428, 39.90923],
           pitch: options.pitch || 0,
-          viewMode: "3D",
+          viewMode: "2D",
+          animateEnable: true,
+          jogEnable: false,
         });
         mapInstanceRef.current = mapInstance;
 
@@ -210,8 +213,8 @@ export function useAMap(options: UseAMapOptions = {}) {
     // 清理函数
     return () => {
       cancelled = true;
-      markersRef.current.forEach((m) => m.setMap(null));
-      markersRef.current = [];
+      for (const { inst } of markersRef.current.values()) inst.setMap(null);
+      markersRef.current = new Map();
       routeRef.current.forEach((line) => line.setMap(null));
       routeRef.current = [];
       mapInstanceRef.current?.destroy();
@@ -220,30 +223,44 @@ export function useAMap(options: UseAMapOptions = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 只在组件挂载时执行一次（options 由调用方保证首帧即定）
 
-  /** 全量重建 markers；不再自动 setFitView（聚焦交给调用方的显式 panTo/聚焦） */
+  /** 增量更新 markers：只增删/替换发生变化的，不全量重建 */
   const updateMarkers = useCallback((markers: MapMarker[]) => {
     const AMap = amapNsRef.current;
     const mapInstance = mapInstanceRef.current;
     if (!AMap || !mapInstance) return;
 
-    // 清除所有现有标记
-    markersRef.current.forEach((marker) => marker.setMap(null));
-    markersRef.current = [];
+    const prev = markersRef.current;
+    const next = new Map<string, { inst: any; fp: string }>();
+    const incomingIds = new Set<string>();
 
-    const newMarkers = markers.map((markerData) => {
-      const marker = new AMap.Marker({
-        position: markerData.position,
-        icon: teardropIcon(AMap, markerData),
+    for (const m of markers) {
+      incomingIds.add(m.id);
+      const fp = `${m.position[0]},${m.position[1]}|${m.label}|${m.color}|${m.kind ?? ""}|${m.visited ? 1 : 0}|${m.emphasized ? 1 : 0}`;
+      const existing = prev.get(m.id);
+
+      if (existing && existing.fp === fp) {
+        next.set(m.id, existing);
+        continue;
+      }
+
+      // 需要新建或替换
+      if (existing) existing.inst.setMap(null);
+      const inst = new AMap.Marker({
+        position: m.position,
+        icon: teardropIcon(AMap, m),
       });
-      if (markerData.emphasized) marker.setzIndex(1000);
-      else marker.setzIndex(0);
+      inst.setzIndex(m.emphasized ? 1000 : 0);
+      inst.on("click", () => m.onClick?.());
+      inst.setMap(mapInstance);
+      next.set(m.id, { inst, fp });
+    }
 
-      marker.on("click", () => markerData.onClick?.());
-      marker.setMap(mapInstance);
-      return marker;
-    });
+    // 删除不再存在的 marker
+    for (const [id, entry] of prev) {
+      if (!incomingIds.has(id)) entry.inst.setMap(null);
+    }
 
-    markersRef.current = newMarkers;
+    markersRef.current = next;
   }, []);
 
   /**
@@ -391,8 +408,8 @@ export function useAMap(options: UseAMapOptions = {}) {
   /** 视野缩放到能装下当前所有 marker（各点坐标从 marker 实例上取） */
   const fitAll = useCallback(() => {
     const points: [number, number][] = [];
-    for (const mk of markersRef.current) {
-      const pos = mk.getPosition?.();
+    for (const { inst } of markersRef.current.values()) {
+      const pos = inst.getPosition?.();
       if (!pos) continue;
       const lng = pos.getLng?.();
       const lat = pos.getLat?.();
@@ -482,6 +499,7 @@ export function useAMap(options: UseAMapOptions = {}) {
     updateMarkers,
     panTo,
     fitAll,
+    fitPoints,
     fitPath,
     setRoutePaths,
     zoomToPlace,

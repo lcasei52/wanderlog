@@ -99,6 +99,7 @@ export default function DayCard({ day }: { day: DayInfo }) {
           placeholder="搜索并添加地点"
           onPlaceSelect={handlePlaceSelect}
           onCancel={() => setIsAddingPlace(false)}
+          autoFocus
         />
       ) : (
         <Button

@@ -10,6 +10,8 @@ import { RoutesProvider } from "@/context/routes-context";
 import SimpleSidebar from "./SimpleSidebar";
 import DetailContent from "./DetailContent";
 import MapView from "./MapView";
+import UndoRedoButtons from "./UndoRedoButtons";
+import PlanHeader from "./PlanHeader";
 
 interface TripWorkspaceProps {
   /** 来自服务端 page 的可序列化行程快照 */
@@ -55,6 +57,7 @@ export default function TripWorkspace({
       tripDates={{ startDate: trip.startDate, endDate: trip.endDate }}
       seeds={{ items: placeItems, placeLists }}
     >
+      <UndoRedoButtons />
       <BookingsProvider tripId={trip.id} flights={flights} hotels={hotels}>
         {/* 路线缓存/隐藏态/地图画线开关由行程列（间隔那行）与地图列（那些线）共享。
             城市只给公交查询用（高德的公交必须有城市），拿行程目的地顶上；
@@ -65,14 +68,20 @@ export default function TripWorkspace({
           city={trip.destination?.name ?? null}
         >
           <div className="flex flex-1 overflow-hidden">
-            <SimpleSidebar
-              trip={trip}
-              activeSection={active.section}
-              activeSubId={active.subId}
-            />
-            <DetailContent trip={trip} onActiveChange={setActive} />
+            {/* 左侧：header + sidebar + detail */}
+            <div className="flex flex-col h-full">
+              <PlanHeader />
+              <div className="flex flex-1 overflow-hidden">
+                <SimpleSidebar
+                  trip={trip}
+                  activeSection={active.section}
+                  activeSubId={active.subId}
+                />
+                <DetailContent trip={trip} onActiveChange={setActive} />
+              </div>
+            </div>
 
-            {/* 地图列：MapView 铺满（PlaceDetailCard 已嵌在 MapView 内、悬浮于地图底部） */}
+            {/* 右侧：地图占满全高 */}
             <div className="relative flex-1 min-w-0">
               <MapView
                 destinationCenter={destinationCenter}
