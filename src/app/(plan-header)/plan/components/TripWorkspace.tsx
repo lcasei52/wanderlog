@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { TripSummary } from "@/types/trip";
-import type { Flight, Hotel, List, PlaceItem } from "@/db/schema";
+import type { Flight, Hotel, List, PlaceItem, Note } from "@/db/schema";
 import type { CachedRoutePlan } from "@/lib/place-route";
 import { PlacesProvider } from "@/context/places-context";
 import { BookingsProvider } from "@/context/bookings-context";
@@ -12,6 +12,7 @@ import DetailContent from "./DetailContent";
 import MapView from "./MapView";
 import UndoRedoButtons from "./UndoRedoButtons";
 import PlanHeader from "./PlanHeader";
+import AiAssistant from "./AiAssistant";
 
 interface TripWorkspaceProps {
   /** 来自服务端 page 的可序列化行程快照 */
@@ -22,6 +23,8 @@ interface TripWorkspaceProps {
   /** 该行程已入库的地点实例 / 地点列表（PlacesProvider 初值） */
   placeItems: PlaceItem[];
   placeLists: List[];
+  /** 该行程的笔记 */
+  notes: Note[];
   /** 已入库的路线缓存（route_plans），灌进 RoutesProvider 省掉重复查询 */
   routePlans: CachedRoutePlan[];
   /** 地图图层里被关掉的那些（trips.hidden_layers），地图列每次改动都会回写 */
@@ -41,6 +44,7 @@ export default function TripWorkspace({
   hotels,
   placeItems,
   placeLists,
+  notes,
   routePlans,
   hiddenLayers,
   destinationCenter,
@@ -50,6 +54,9 @@ export default function TripWorkspace({
     section: string | null;
     subId: string | null;
   }>({ section: "overview", subId: null });
+
+  // AI 助手侧边栏状态
+  const [isAiOpen, setIsAiOpen] = useState(false);
 
   return (
     <PlacesProvider
@@ -76,8 +83,9 @@ export default function TripWorkspace({
                   trip={trip}
                   activeSection={active.section}
                   activeSubId={active.subId}
+                  onAiClick={() => setIsAiOpen(true)}
                 />
-                <DetailContent trip={trip} onActiveChange={setActive} />
+                <DetailContent trip={trip} notes={notes} onActiveChange={setActive} />
               </div>
             </div>
 
@@ -89,6 +97,15 @@ export default function TripWorkspace({
               />
             </div>
           </div>
+
+          {/* AI 助手侧边栏。tripId 用来读写对话记录；destination 只喂给 AI 当上下文。 */}
+          <AiAssistant
+            isOpen={isAiOpen}
+            onClose={() => setIsAiOpen(false)}
+            tripId={trip.id}
+            tripName={trip.name}
+            destination={trip.destination?.name}
+          />
         </RoutesProvider>
       </BookingsProvider>
     </PlacesProvider>

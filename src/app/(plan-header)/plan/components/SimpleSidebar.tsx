@@ -39,6 +39,8 @@ interface SimpleSidebarProps {
   activeSection?: string | null;
   /** 当前阅读位置所在的小标题锚点 id（list-* / day-*）；无则 null */
   activeSubId?: string | null;
+  /** 点击 AI 助手按钮的回调 */
+  onAiClick?: () => void;
 }
 
 /** 平滑滚到详情页里的某个锚点（block:start，锚点自带 scroll-mt 留白） */
@@ -57,6 +59,7 @@ export default function SimpleSidebar({
   trip,
   activeSection,
   activeSubId,
+  onAiClick,
 }: SimpleSidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({
@@ -105,14 +108,15 @@ export default function SimpleSidebar({
       <TooltipProvider delayDuration={200}>
         <aside className="w-12 border-r flex flex-col h-full bg-white">
           {/* AI 助手 */}
-          <div className="flex items-center justify-center p-4 border-b bg-gradient-to-b from-orange-50 to-orange-100">
+          <div className="flex items-center justify-center p-2 border-b">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
+                  onClick={onAiClick}
                   size="icon"
-                  className="h-9 w-9 rounded-full bg-orange-500 hover:bg-orange-600 text-white"
+                  className="h-10 w-10 rounded-full bg-gradient-to-br from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white shadow-md hover:shadow-lg transition-all"
                 >
-                  <Sparkles className="h-4 w-4" />
+                  <Sparkles className="h-5 w-5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" sideOffset={8}>
@@ -241,9 +245,12 @@ export default function SimpleSidebar({
 
   return (
     <aside className="w-56 border-r flex flex-col h-full bg-white">
-      {/* 顶部：AI助手 + 行程名 */}
-      <div className="p-4 bg-gradient-to-r from-orange-50 to-orange-100 border-b">
-        <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white rounded-full flex items-center justify-center gap-2">
+      {/* 顶部：AI助手 */}
+      <div className="p-3 border-b">
+        <Button
+          onClick={onAiClick}
+          className="w-full bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white rounded-full flex items-center justify-center gap-2 shadow-sm hover:shadow-md transition-all"
+        >
           <Sparkles className="h-4 w-4" />
           <span className="font-medium">AI 助手</span>
         </Button>

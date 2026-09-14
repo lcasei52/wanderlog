@@ -217,6 +217,28 @@ export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
 
 /* ============================================================
+ * chat_messages —— AI 助手的对话记录
+ * 一条消息一行，按 created_at 升序就是对话顺序（天然追加，
+ * 不需要 position）。只记 role/content/model：
+ * **API Key 永远不进这张表** —— 它是用户自己的钱，只留在浏览器 localStorage。
+ * ============================================================ */
+export const chatMessages = pgTable("chat_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tripId: text("trip_id")
+    .notNull()
+    .references(() => trips.id, { onDelete: "cascade" }),
+  role: text("role").notNull(), // 'user' | 'assistant'
+  content: text("content").notNull(),
+  // 这条是哪个模型产的，写成 "厂商:模型"（如 "glm:glm-5.2"）。
+  // 用户消息没有模型，为 null。留着以后对比不同模型的表现。
+  model: text("model"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type NewChatMessage = typeof chatMessages.$inferInsert;
+
+/* ============================================================
  * route_plans —— 两地点之间"怎么走"的缓存（时长 / 距离 / 折线）
  * 纯缓存，键就是 (trip_id, route_key)，所以不另设代理主键。
  *

@@ -15,6 +15,7 @@ import {
 import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import type { TripSummary } from "@/types/trip";
+import type { Note } from "@/db/schema";
 import { usePlaces } from "@/context/places-context";
 import { updateTripCover } from "@/actions/trip-cover";
 import ImagePickerDialog from "@/components/ImagePickerDialog";
@@ -30,12 +31,15 @@ import DayCard from "./itinerary/DayCard";
 interface DetailContentProps {
   /** 来自数据库的行程快照 */
   trip?: TripSummary;
+  /** 该行程的笔记 */
+  notes: Note[];
   /** 滚动位置变化时上报：当前所在的大类 id（overview/itinerary/budget）与小标题锚点 id */
   onActiveChange?: (active: { section: string; subId: string | null }) => void;
 }
 
 export default function DetailContent({
   trip,
+  notes,
   onActiveChange,
 }: DetailContentProps) {
   const router = useRouter();
@@ -192,7 +196,7 @@ export default function DetailContent({
 
           {/* 列表区：Notes / Flights / Hotels / 各地点列表 */}
           <div className="bg-white rounded-lg shadow-sm overflow-hidden divide-y divide-gray-100">
-            <NotesList />
+            <NotesList tripId={trip?.id ?? ""} notes={notes} />
             <FlightsList />
             <HotelsList />
             {placeLists.map((list) => (
