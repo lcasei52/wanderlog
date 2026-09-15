@@ -32,6 +32,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+// 厂商清单、协议拼装、错误翻译都在 lib/ai-providers（那边是纯逻辑，不碰 React），
+// 好让别处也能用同一套配置发一次请求（如详情卡的「生成简介」）
+import {
+  PROVIDERS,
+  DEFAULT_PROVIDER_ID,
+  CUSTOM_MODEL,
+  LS_PROVIDER,
+  LS_MODEL,
+  LS_KEYS,
+  callAi,
+  describeHttpError,
+  type ApiKeyMap,
+  type Message,
+} from "@/lib/ai-providers";
 import { usePlaces, type DayInfo } from "@/context/places-context";
 import { useBookings } from "@/context/bookings-context";
 import type { Flight, Hotel } from "@/db/schema";
@@ -49,211 +63,6 @@ interface AiAssistantProps {
   tripName: string;
   /** 目的地名，只用于喂给 AI 当上下文 */
   destination?: string;
-}
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
-
-/** 接口协议：Anthropic 走 /v1/messages，其余都按 OpenAI 兼容的 /chat/completions */
-type ApiStyle = "openai" | "anthropic";
-
-interface ProviderModel {
-  id: string;
-  label: string;
-}
-
-interface Provider {
-  id: string;
-  label: string;
-  /** 接口前缀，具体路径按 api 拼 */
-  baseUrl: string;
-  api: ApiStyle;
-  /** Key 长什么样，只用于输入框 placeholder */
-  keyHint: string;
-  /** 去哪申请 Key */
-  docsUrl: string;
-  models: ProviderModel[];
-}
-
-/**
- * 各家模型清单（2026-09 核对）。
- * 模型换代很快，过期了直接改这个数组就行 —— 设置里还有「自定义模型 ID」兜底。
- */
-const PROVIDERS: Provider[] = [
-  {
-    id: "openai",
-    label: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    api: "openai",
-    keyHint: "sk-...",
-    docsUrl: "https://platform.openai.com/api-keys",
-    models: [
-      { id: "gpt-6-astra", label: "GPT-6 Astra（旗舰）" },
-      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna（便宜）" },
-    ],
-  },
-  {
-    id: "anthropic",
-    label: "Anthropic (Claude)",
-    baseUrl: "https://api.anthropic.com",
-    api: "anthropic",
-    keyHint: "sk-ant-...",
-    docsUrl: "https://platform.claude.com/settings/keys",
-    models: [
-      { id: "claude-fable-5-1", label: "Claude Fable 5.1（旗舰）" },
-      { id: "claude-opus-5", label: "Claude Opus 5" },
-      { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
-      { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5（便宜）" },
-    ],
-  },
-  {
-    id: "google",
-    label: "Google (Gemini)",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    api: "openai",
-    keyHint: "AIza...",
-    docsUrl: "https://aistudio.google.com/apikey",
-    models: [
-      { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
-      { id: "gemini-3-flash-preview", label: "Gemini 3 Flash" },
-      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash（便宜）" },
-    ],
-  },
-  {
-    id: "glm",
-    label: "智谱 GLM",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    api: "openai",
-    keyHint: "id.secret",
-    docsUrl: "https://open.bigmodel.cn/usercenter/apikeys",
-    models: [
-      { id: "glm-5.2", label: "GLM-5.2（旗舰）" },
-      { id: "glm-5.1", label: "GLM-5.1" },
-      { id: "glm-5", label: "GLM-5" },
-      { id: "glm-5-flash", label: "GLM-5 Flash（免费）" },
-    ],
-  },
-  {
-    id: "deepseek",
-    label: "DeepSeek",
-    baseUrl: "https://api.deepseek.com/v1",
-    api: "openai",
-    keyHint: "sk-...",
-    docsUrl: "https://platform.deepseek.com/api_keys",
-    models: [
-      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro（旗舰）" },
-      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash（便宜）" },
-      {
-        id: "deepseek-v4-flash-vision-exp",
-        label: "DeepSeek V4 Flash Vision（实验·可看图）",
-      },
-    ],
-  },
-];
-
-const DEFAULT_PROVIDER_ID = "openai";
-/** 模型下拉里的「自定义…」，选中后把下拉换成输入框，模型换代时不用改代码 */
-const CUSTOM_MODEL = "__custom__";
-
-/** localStorage 键名 */
-const LS_PROVIDER = "ai_provider";
-const LS_MODEL = "ai_model";
-const LS_KEYS = "ai_keys";
-
-/** 各厂商存在同一份 map 里：{ openai: "sk-...", deepseek: "sk-..." }，换厂商不丢 key */
-type ApiKeyMap = Record<string, string>;
-
-/**
- * 按协议发一次对话请求，返回助手回复的纯文本。
- * 直接在浏览器里打各家的 API —— key 只存在 localStorage，不经过我们的服务器。
- */
-async function callAi(params: {
-  provider: Provider;
-  model: string;
-  apiKey: string;
-  system: string;
-  messages: Message[];
-  signal: AbortSignal;
-}): Promise<string> {
-  const { provider, model, apiKey, system, messages, signal } = params;
-  const isAnthropic = provider.api === "anthropic";
-
-  const url = isAnthropic
-    ? `${provider.baseUrl}/v1/messages`
-    : `${provider.baseUrl}/chat/completions`;
-
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-  };
-  let body: unknown;
-
-  if (isAnthropic) {
-    headers["x-api-key"] = apiKey;
-    headers["anthropic-version"] = "2023-06-01";
-    // 浏览器直连必须显式声明，否则 Anthropic 会以 CORS 拒掉
-    headers["anthropic-dangerous-direct-browser-access"] = "true";
-    body = {
-      model,
-      max_tokens: 2048,
-      system,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
-    };
-  } else {
-    headers.authorization = `Bearer ${apiKey}`;
-    body = {
-      model,
-      messages: [{ role: "system", content: system }, ...messages],
-    };
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal,
-    });
-  } catch (err) {
-    if ((err as Error)?.name === "AbortError") throw err;
-    throw new Error("网络请求失败：可能是网络不通，或该厂商不允许浏览器直连。");
-  }
-
-  if (!res.ok) throw new Error(await describeHttpError(res));
-
-  const data = await res.json();
-  const content = isAnthropic
-    ? ((data?.content ?? []) as { text?: string }[])
-        .map((block) => block.text ?? "")
-        .join("")
-    : ((data?.choices?.[0]?.message?.content as string | undefined) ?? "");
-
-  if (!content.trim()) throw new Error("模型返回了空内容，换个模型或重试试试。");
-  return content.trim();
-}
-
-/** 把各家的错误报文（形状不完全一样）翻译成一句能看懂的话 */
-async function describeHttpError(res: Response): Promise<string> {
-  let detail = "";
-  try {
-    const data = await res.json();
-    const msg = data?.error?.message ?? data?.message ?? data?.error;
-    if (typeof msg === "string") detail = msg;
-  } catch {
-    // 响应不是 JSON，用状态码兜底
-  }
-  const suffix = detail ? `：${detail}` : "";
-
-  if (res.status === 401 || res.status === 403)
-    return `API Key 无效或没有权限（${res.status}）${suffix}`;
-  if (res.status === 404)
-    return `模型不存在，或你的账号没开通这个模型（404）${suffix}`;
-  if (res.status === 429) return `请求太频繁或额度已用完（429）${suffix}`;
-  return `接口返回 ${res.status} ${res.statusText}${suffix}`;
 }
 
 /** 地点压进 prompt 时全程最多列这么多处，超了只报个数，免得行程把 prompt 撑爆 */

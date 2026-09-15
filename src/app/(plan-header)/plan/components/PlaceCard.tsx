@@ -19,9 +19,21 @@ import { usePlaces } from "@/context/places-context";
 import { cn } from "@/lib/utils";
 import VisitedButton, { visitedToggleFeedback } from "./VisitedButton";
 import PlaceKindBadge from "./PlaceKindBadge";
+import { placeKindOf } from "@/lib/place-kinds";
 
 /** 已访问 mini marker 的固定灰色（与地图一致） */
 const VISITED_SLATE = "#94a3b8";
+
+/**
+ * 地点行的分发：酒店（住宿自动挂上的那些行）渲染成一行小字，其余一律照常是卡片。
+ *
+ * 放在这里而不是调用方（DayCard / PlacesList），是为了让"酒店行永远是小字"
+ * 成为一条全局规则 —— 不管它被渲染在哪个容器里都一致。
+ */
+export default function PlaceCard({ item }: { item: PlaceItem }) {
+  if (placeKindOf(item) === "hotel") return <HotelLine item={item} />;
+  return <PlaceCardBody item={item} />;
+}
 
 /**
  * 地点卡：可嵌入任何地点列表 / DayCard 容器。
@@ -30,7 +42,7 @@ const VISITED_SLATE = "#94a3b8";
  * 展开后点卡片外部自动收起。时间/附件弹层用 Portal 渲染到 body，避免被外层容器裁切。
  * 拖动排序 / 删除由外层 SortableCardGroup 提供（手柄与垃圾桶浮在卡片外面的左右两侧）。
  */
-export default function PlaceCard({ item }: { item: PlaceItem }) {
+function PlaceCardBody({ item }: { item: PlaceItem }) {
   const { selectItem, itemNumber, itemColor, updateItem } = usePlaces();
 
   const [expanded, setExpanded] = useState(false);
@@ -70,7 +82,7 @@ export default function PlaceCard({ item }: { item: PlaceItem }) {
       if (
         typeof (target as Element).closest === "function" &&
         (target as Element).closest(
-          "[data-inline-pop],[role='dialog'],[data-sonner-toaster]"
+          "[data-inline-pop],[role='dialog'],[data-sonner-toaster]",
         )
       ) {
         return;
@@ -165,7 +177,6 @@ export default function PlaceCard({ item }: { item: PlaceItem }) {
             expanded && "rotate-90",
           )}
         />
-
       </div>
 
       {/* 展开：就地编辑 */}
@@ -219,6 +230,38 @@ export default function PlaceCard({ item }: { item: PlaceItem }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 酒店那一行小字。
+ *
+ * 住宿在当天列表里是 hotels 表那一行的**投影**：它只表明"这天从哪儿出发、晚上回哪儿睡"，
+ * 顺带给前后两张卡撑出一段可导航的间隔。所以它是纯展示的 —— 不能点、不能删、不能编辑，
+ * 身上不产生任何用户数据（要改住宿信息去概览的 Hotels 里改，要改"住哪几天"也是改酒店日期；
+ * 删除同理，见 place-kinds 的 canDeletePlace）。
+ *
+ * 删不掉 + 编辑不了，合起来意味着将来改酒店日期时可以放心把这几行删了重建。
+ *
+ * 但底层仍是一份 place_items 行，**不能**改成纯渲染出来的东西：坐标（地图 marker）、
+ * 路线端点（PlaceDayGap 两端都要 lng/lat）、段间交通方式（route_mode_to_next 存在
+ * 起点那张 item 上）全都挂在它身上。
+ */
+function HotelLine({ item }: { item: PlaceItem }) {
+  return (
+    // pl-2：因为没有边框所以向左推。比 PlaceDayGap 的 left-8 再靠左一点 ——
+    // 那行有图标和按钮要摆，这行只有名字，让它挂在线上更像"从这条线上长出来的"
+    <div className="flex items-center py-1 pl-2 text-xs text-gray-400">
+      <span
+        className={cn(
+          "truncate",
+          // 已访问的划线仍要显示（那是从详情卡设的），只是这一行本身不给开关
+          item.visited && "line-through decoration-gray-300",
+        )}
+      >
+        {item.name}
+      </span>
     </div>
   );
 }

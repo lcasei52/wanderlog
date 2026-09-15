@@ -32,43 +32,113 @@ interface ImagePickerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (result: { url?: string; data?: string }) => void;
-  /** 行程目的地名，用于搜索相关图片（如"武汉"） */
-  destinationName?: string;
+  /** 拿去搜图的词：行程传目的地名（如"武汉"），地点传地点名 */
+  searchQuery?: string;
+  /** 文案里的宾语，如"行程封面" / "地点图片" */
+  subject?: string;
+  /** 本地图上限（字节）。超出会先尝试压缩，压不下去才报错 */
+  maxBytes?: number;
+}
+
+/** data URI 的 base64 段换算回字节数（头部的 `data:...;base64,` 不算） */
+function dataUrlBytes(dataUrl: string): number {
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  return Math.floor((base64.length * 3) / 4);
+}
+
+/** 只用于文案，不追求精确 */
+function formatBytes(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return `${mb >= 1 ? Math.round(mb) : mb.toFixed(1)}MB`;
+}
+
+/**
+ * 把图压进 maxBytes。策略：最长边先缩到 1600，然后质量从 0.85 往 0.45 逐档试；
+ * 一轮压不下去就把尺寸折半重来，三档到底还超标就返回 null（调用方报错）。
+ *
+ * 两个坑：canvas 必须先铺白底 —— PNG 的透明区直接转 JPEG 会变成黑块；
+ * 每轮都重新 toDataURL 很贵，所以质量档由高到低早退，够用就停。
+ */
+async function compressToDataUrl(
+  file: File,
+  maxBytes: number
+): Promise<string | null> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      // 必须是 window.Image —— 这个文件顶上的 `Image` 是 next/image 的组件，不是构造函数
+      const el = new window.Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("图片解码失败"));
+      el.src = objectUrl;
+    });
+
+    let maxSide = 1600;
+    for (let round = 0; round < 3; round++) {
+      const ratio = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * ratio));
+      const h = Math.max(1, Math.round(img.height * ratio));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+
+      for (const quality of [0.85, 0.75, 0.65, 0.55, 0.45]) {
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        if (dataUrlBytes(dataUrl) <= maxBytes) return dataUrl;
+      }
+      maxSide /= 2;
+    }
+    return null;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 export default function ImagePickerDialog({
   open,
   onOpenChange,
   onSelect,
-  destinationName,
+  searchQuery,
+  subject = "图片",
+  maxBytes = 2 * 1024 * 1024,
 }: ImagePickerDialogProps) {
   // 网络图片 tab 状态
   const [images, setImages] = useState<UnsplashImage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [hasLoaded, setHasLoaded] = useState(false);
+  // 记住"上一次是为哪个词拉的"，而不是一个布尔 —— 这个弹窗现在是共用的，
+  // 换成布尔的话，看完 A 地点的图再开 B 地点会一直显示 A 的图（不再重新拉）
+  const loadedQueryRef = useRef<string | null>(null);
 
   // 本地上传 tab 状态
   const [localPreview, setLocalPreview] = useState<string | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const query = searchQuery || "travel";
 
   // 弹窗打开时自动加载图片
   useEffect(() => {
-    if (open && !hasLoaded) {
+    if (open && loadedQueryRef.current !== query) {
       fetchImages();
     }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, query]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 首次打开 network tab 时加载图片（基于 destination 或默认 travel）
+  // 切到 network tab 时按需加载（基于 searchQuery 或默认 travel）
   const handleTabChange = async (value: string) => {
-    if (value === "network" && !hasLoaded) {
+    if (value === "network" && loadedQueryRef.current !== query) {
       await fetchImages();
     }
   };
 
-  // 搜索网络图片（固定 9 张，基于 destination 或默认 travel）
+  // 搜索网络图片（固定 9 张，基于 searchQuery 或默认 travel）
   const fetchImages = async () => {
     setIsLoading(true);
-    const query = destinationName || "travel";
     try {
       const response = await fetch(
         `/api/unsplash/search?q=${encodeURIComponent(query)}`
@@ -76,7 +146,7 @@ export default function ImagePickerDialog({
       if (!response.ok) throw new Error("Failed to fetch images");
       const data = await response.json();
       setImages((data.images || []).slice(0, 9)); // 只取前 9 张
-      setHasLoaded(true);
+      loadedQueryRef.current = query;
     } catch (error) {
       console.error("Failed to fetch images:", error);
       toast.error("加载图片失败，请稍后重试");
@@ -93,30 +163,44 @@ export default function ImagePickerDialog({
   };
 
   // 处理本地文件选择
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // 检查文件大小（2MB 限制）
-    const maxSize = 2 * 1024 * 1024; // 2MB
-    if (file.size > maxSize) {
-      toast.error("图片过大，请选择小于 2MB 的文件");
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+    const reset = () => {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+
+    // 没超上限就原样读进来 —— 不为了"统一"去重编码，白白掉一层画质
+    if (file.size <= maxBytes) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        setLocalPreview(dataUrl);
+      };
+      reader.onerror = () => {
+        toast.error("读取文件失败");
+      };
+      reader.readAsDataURL(file);
       return;
     }
 
-    // 读取文件转 base64
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
+    // 超了先压，压得进去就照收 —— 不劳用户自己去改图
+    setIsCompressing(true);
+    try {
+      const dataUrl = await compressToDataUrl(file, maxBytes);
+      if (!dataUrl) {
+        toast.error(`图片过大，压缩后仍超过 ${formatBytes(maxBytes)}，请换一张`);
+        reset();
+        return;
+      }
       setLocalPreview(dataUrl);
-    };
-    reader.onerror = () => {
-      toast.error("读取文件失败");
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      toast.error("图片处理失败，请换一张试试");
+      reset();
+    } finally {
+      setIsCompressing(false);
+    }
   };
 
   // 确认使用本地图片
@@ -140,7 +224,7 @@ export default function ImagePickerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>选择封面图片</DialogTitle>
+          <DialogTitle>选择{subject}</DialogTitle>
         </DialogHeader>
 
         <Tabs
@@ -188,9 +272,7 @@ export default function ImagePickerDialog({
                 <div className="flex flex-col items-center justify-center h-64 text-gray-400">
                   <Search className="h-12 w-12 mb-2" />
                   <p>
-                    {destinationName
-                      ? `暂无「${destinationName}」相关图片`
-                      : "暂无图片"}
+                    {searchQuery ? `暂无「${searchQuery}」相关图片` : "暂无图片"}
                   </p>
                 </div>
               )}
@@ -242,19 +324,25 @@ export default function ImagePickerDialog({
                     </div>
                     <div className="text-center">
                       <p className="text-sm text-gray-600 mb-2">
-                        选择一张图片作为行程封面
+                        选择一张图片作为{subject}
                       </p>
                       <p className="text-xs text-gray-400">
-                        支持 JPG、PNG 格式，文件大小不超过 2MB
+                        支持 JPG、PNG 格式，超过 {formatBytes(maxBytes)}{" "}
+                        会自动压缩
                       </p>
                     </div>
                   </div>
                   <Button
                     onClick={() => fileInputRef.current?.click()}
+                    disabled={isCompressing}
                     className="bg-orange-500 hover:bg-orange-600"
                   >
-                    <Upload className="h-4 w-4 mr-2" />
-                    选择本地图片
+                    {isCompressing ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Upload className="h-4 w-4 mr-2" />
+                    )}
+                    {isCompressing ? "压缩中…" : "选择本地图片"}
                   </Button>
                   <input
                     ref={fileInputRef}

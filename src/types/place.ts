@@ -53,6 +53,8 @@ export interface PlaceItemInput {
   lng?: number | null;
   lat?: number | null;
   note?: string;
+  /** 地点简介（详情卡里的资料性文字，AI 生成或手写）；与"我的备忘"note 分工不同 */
+  description?: string | null;
   timeFrom?: string | null; // "HH:mm"
   timeTo?: string | null; // "HH:mm"
   url?: string | null;
@@ -89,6 +91,7 @@ export type PlaceItemPatch = Partial<
     | "lng"
     | "lat"
     | "note"
+    | "description"
     | "timeFrom"
     | "timeTo"
     | "url"

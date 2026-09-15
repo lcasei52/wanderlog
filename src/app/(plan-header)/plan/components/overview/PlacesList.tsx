@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { PlaceList, PlaceItemInput } from "@/types/place";
 import { usePlaces } from "@/context/places-context";
 import { buildGroupKey } from "@/lib/place-groups";
-import { canDragPlace } from "@/lib/place-kinds";
+import { canDeletePlace, canDragPlace } from "@/lib/place-kinds";
 import ListShell from "./ListShell";
 import PlaceCard from "../PlaceCard";
 import { PlaceListGap } from "../PlaceGap";
@@ -80,6 +80,11 @@ export default function PlacesList({ list }: { list: PlaceList }) {
           canDrag={(id) => {
             const it = items.find((p) => p.id === id);
             return it ? canDragPlace(it) : false;
+          }}
+          // 同上：复制进来的酒店行也不给垃圾桶
+          canDelete={(id) => {
+            const it = items.find((p) => p.id === id);
+            return it ? canDeletePlace(it) : false;
           }}
           // 卡与卡之间：hover 浮出虚线 + 左端 +，可就地在该位置添加地点
           renderGap={(_, index, dragging) => (

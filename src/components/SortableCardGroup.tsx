@@ -18,6 +18,12 @@ interface SortableCardGroupProps {
    */
   canDrag?: (id: string) => boolean;
   /**
+   * 该卡能不能删（默认都能）。返回 false 的卡不显示垃圾桶 ——
+   * 派生出来的行（如每天首尾的酒店）不给删：它们的生命周期归父行管，
+   * 在这里删掉下次也还会长回来。
+   */
+  canDelete?: (id: string) => boolean;
+  /**
    * 画两张卡之间的"间隔"（从第 2 张起，每张卡上方一条；传 null 就是纯空隙）。
    * beforeId/index = 这条间隔下面那张卡；dragging = 正在拖别的卡 ——
    * 间隔里的交互（比如列表的 + 号）应当在这时让位给橙色插入线。
@@ -54,6 +60,7 @@ export default function SortableCardGroup({
   onReorder,
   onDelete,
   canDrag,
+  canDelete,
   renderGap,
   renderItem,
   className,
@@ -160,8 +167,8 @@ export default function SortableCardGroup({
               </Button>
             )}
 
-            {/* 垃圾桶：卡片右边外面，hover 卡片时浮现 */}
-            {onDelete && (
+            {/* 垃圾桶：卡片右边外面，hover 卡片时浮现（canDelete 为 false 的卡不给） */}
+            {onDelete && (canDelete ? canDelete(id) : true) && (
               <Button
                 type="button"
                 variant="ghost"

@@ -1,18 +1,33 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import {
+  Building2,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Crosshair,
+  ImagePlus,
   Layers,
+  Loader2,
   MapPin,
+  MapPinned,
+  Pencil,
   Phone,
+  Sparkles,
+  Star,
   Tag,
+  Wallet,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -21,8 +36,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Textarea } from "@/components/ui/textarea";
+import ImagePickerDialog from "@/components/ImagePickerDialog";
 import type { PlaceContainer, PlaceItem } from "@/types/place";
 import { usePlaces } from "@/context/places-context";
+import { usePlaceFacts, type PlaceFacts } from "@/hooks/usePlaceFacts";
+import { callAi, readAiConfig } from "@/lib/ai-providers";
 import { getColorByListId } from "@/lib/colors";
 import VisitedButton, { visitedToggleFeedback } from "./VisitedButton";
 import PlaceKindBadge from "./PlaceKindBadge";
@@ -41,14 +60,48 @@ function inContainer(item: PlaceItem, container: PlaceContainer): boolean {
 }
 
 /**
+ * 把已知信息拼成给模型的一段话。有 AMap 的评分/营业时间就一起给 ——
+ * 模型知道"这是个人均 85、晚上十点关门的地方"，写出来的介绍会具体得多。
+ */
+function buildPlacePrompt(cur: PlaceItem, facts: PlaceFacts | null): string {
+  const lines = [`名称：${cur.name}`];
+  if (cur.address) lines.push(`地址：${cur.address}`);
+  if (cur.type) lines.push(`分类：${cur.type}`);
+  const region = [facts?.province, facts?.city, facts?.district]
+    .filter(Boolean)
+    .join("");
+  if (region) lines.push(`所在：${region}`);
+  if (facts?.businessArea) lines.push(`商圈：${facts.businessArea}`);
+  if (facts?.rating) lines.push(`评分：${facts.rating}`);
+  if (facts?.cost) lines.push(`人均：${facts.cost}`);
+  if (facts?.openTime) lines.push(`营业时间：${facts.openTime}`);
+  return lines.join("\n");
+}
+
+/**
  * 浮在地图列底部的"地点详情"卡：展示当前选中的一份地点实例，
  * 顶部工具条 = 「N个中的第M个」前后切换 + 缩放至此地点；
- * 正文 = 图片/详情 + 已访问开关 + 「属于哪些图层」下拉（勾选=复制一份过去、取消=删除该图层那份）。
+ * 正文（左）= 详情/简介 + 已访问开关 + 「属于哪些图层」下拉
+ * （勾选=复制一份过去、取消=删除该图层那份）；右侧 = 图片（可点开大图、可更换）。
  */
 export default function PlaceDetailCard({ zoomToPlace }: PlaceDetailCardProps) {
+  const { item, selectedItemId } = usePlaces();
+  const cur = selectedItemId ? item(selectedItemId) : null;
+  if (!cur) return null;
+
+  // key 换一个地点就整块重挂载：大图、换图弹窗、简介编辑这些"半途状态"跟着归零。
+  // 否则"正在编辑简介时点了下一个地点"，上一处的草稿会带到下一处去
+  return <DetailBody key={cur.id} cur={cur} zoomToPlace={zoomToPlace} />;
+}
+
+function DetailBody({
+  cur,
+  zoomToPlace,
+}: {
+  cur: PlaceItem;
+  zoomToPlace?: (position: [number, number], zoom?: number) => void;
+}) {
   const {
-    item,
-    selectedItemId,
     placeLists,
     days,
     peers,
@@ -64,9 +117,37 @@ export default function PlaceDetailCard({ zoomToPlace }: PlaceDetailCardProps) {
     updateItem,
   } = usePlaces();
 
-  if (!selectedItemId) return null;
-  const cur = item(selectedItemId);
-  if (!cur) return null;
+  // 大图 / 换图弹窗 / 简介编辑
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [descDraft, setDescDraft] = useState("");
+  const [generating, setGenerating] = useState(false);
+  // 保存后先本地显示新内容，等服务器那份绕回来再让位。不这么做的话，
+  // 「保存 → 切回只读」到 revalidate 回来之间会闪一下旧文字
+  const [optimisticDesc, setOptimisticDesc] = useState<
+    string | null | undefined
+  >(undefined);
+  // AI 配置存在 localStorage，只能挂载后读 —— 渲染期间读会和服务端输出对不上
+  const [aiConfig, setAiConfig] = useState<ReturnType<typeof readAiConfig>>(null);
+
+  const { facts } = usePlaceFacts(cur);
+
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    setAiConfig(readAiConfig());
+  }, []);
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // 服务器值追上乐观值了就撤掉它；没追上（比如写库失败）就继续显示用户刚写的
+  useEffect(() => {
+    if (optimisticDesc !== undefined && cur.description === optimisticDesc) {
+      setOptimisticDesc(undefined);
+    }
+  }, [cur.description, optimisticDesc]);
+
+  const shownDesc =
+    optimisticDesc !== undefined ? optimisticDesc : cur.description;
 
   // 当前容器内的全部实例（按行序 1..N），用于"第 M 个 / 共 N 个"前后切换
   const containerItems = itemsInContainer(containerOf(cur));
@@ -145,178 +226,448 @@ export default function PlaceDetailCard({ zoomToPlace }: PlaceDetailCardProps) {
   if (cur.tel) infoRows.push({ icon: <Phone className="h-4 w-4" />, text: cur.tel });
   if (cur.type) infoRows.push({ icon: <Tag className="h-4 w-4" />, text: cur.type });
 
+  // AMap 补充信息。每一项都"有才渲染" —— 没配 AMAP_WEB_KEY 时评分/人均/营业时间
+  // 整块不出现，不会留一排空壳
+  const factRows: { icon: React.ReactNode; label: string; value: string }[] = [];
+  const region = [facts?.province, facts?.city, facts?.district]
+    .filter(Boolean)
+    .join("");
+  if (region)
+    factRows.push({
+      icon: <MapPinned className="h-4 w-4" />,
+      label: "所在",
+      value: region,
+    });
+  if (facts?.businessArea)
+    factRows.push({
+      icon: <Building2 className="h-4 w-4" />,
+      label: "商圈",
+      value: facts.businessArea,
+    });
+  if (facts?.rating)
+    factRows.push({ icon: <Star className="h-4 w-4" />, label: "评分", value: facts.rating });
+  if (facts?.cost)
+    factRows.push({ icon: <Wallet className="h-4 w-4" />, label: "人均", value: `¥${facts.cost}` });
+  if (facts?.openTime)
+    factRows.push({
+      icon: <Clock className="h-4 w-4" />,
+      label: "营业时间",
+      value: facts.openTime,
+    });
+
+  // AMap 给的其余照片（封面那张不重复列）
+  const otherPhotos = (facts?.photos ?? []).filter((p) => p !== cur.photo);
+
   const number = itemNumber(cur);
   const color = cur.visited ? "#94a3b8" : itemColor(cur);
+
+  // —— 换图 ——
+  // 网络图给 url、本地图给 data，最终都进 photo 这一列（updatePlaceItem 会写它）
+  const handlePhotoSelect = ({ url, data }: { url?: string; data?: string }) => {
+    updateItem(cur.id, { photo: url ?? data ?? null });
+    toast.success("图片已更新");
+  };
+
+  // —— 简介 ——
+  const startEditDesc = () => {
+    setDescDraft(shownDesc ?? "");
+    setEditingDesc(true);
+  };
+
+  const saveDescription = () => {
+    const next = descDraft.trim() || null;
+    setOptimisticDesc(next);
+    setEditingDesc(false);
+    void updateItem(cur.id, { description: next });
+  };
+
+  const generateDescription = async () => {
+    const cfg = readAiConfig();
+    if (!cfg) return;
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setGenerating(true);
+    try {
+      const reply = await callAi({
+        provider: cfg.provider,
+        model: cfg.model,
+        apiKey: cfg.apiKey,
+        signal: controller.signal,
+        system:
+          "你是旅行资料编辑。用中文客观介绍用户给出的地点，2-3 句说清它是什么、有什么看点。" +
+          "不要罗列条款，不要用 Markdown 标记，不要编造你不确定的事实。",
+        messages: [{ role: "user", content: buildPlacePrompt(cur, facts) }],
+      });
+      // 生成的东西先让人过一眼：填进编辑框，点「保存」才落库。
+      // 这样"可编辑"这条语义才是连贯的 —— 生成和手写走的是同一条路
+      setDescDraft(reply);
+      setEditingDesc(true);
+    } catch (err) {
+      // abort 是切换地点/卸载导致的，不是错误
+      if ((err as Error)?.name !== "AbortError") {
+        toast.error(err instanceof Error ? err.message : "生成失败，请重试");
+      }
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const navBtn =
     "h-7 px-2 gap-1 text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent";
 
   return (
-    <div className="absolute inset-0 z-20 flex justify-center px-4 pb-4 overflow-hidden pointer-events-none">
+    <div className="absolute inset-0 z-20 flex px-4 pb-4 overflow-hidden pointer-events-none">
       {/* h-full：让内层占满地图列高度，卡片的 max-h-[55%] 才有确定参照系，
           内容超高时在正文里滚动而不是撑破/裁掉 */}
-      <div className="flex h-full w-full max-w-lg flex-col items-center justify-end gap-2">
-        {/* 工具条：前后切换 + 缩放至此地点 */}
-        <div className="flex items-center rounded-full border border-gray-200 bg-white px-1.5 py-1 shadow-lg pointer-events-auto">
-          {showNav ? (
-            <div className="flex items-center gap-0.5">
-              <Button
-                variant="ghost"
-                size="sm"
-                className={navBtn}
-                aria-label="上一个地点"
-                disabled={!prevItem}
-                onClick={() => prevItem && selectItem(prevItem.id)}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="px-1 text-xs text-gray-600 whitespace-nowrap">
-                {total}个中的第{curIndex + 1}个
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={navBtn}
-                aria-label="下一个地点"
-                disabled={!nextItem}
-                onClick={() => nextItem && selectItem(nextItem.id)}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <span className="mx-1 h-4 w-px bg-gray-200" />
-            </div>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(navBtn, "h-7")}
-            aria-label="缩放至此地点"
-            title="缩放至此地点（放到地图上半屏）"
-            disabled={cur.lng == null || cur.lat == null || !zoomToPlace}
-            onClick={() =>
-              cur.lng != null && cur.lat != null && zoomToPlace?.([cur.lng, cur.lat])
-            }
-          >
-            <Crosshair className="h-3.5 w-3.5" />
-            缩放至此地点
-          </Button>
-        </div>
-
-        <Card className="w-full pointer-events-auto shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[55%] min-h-0">
-          {/* 图片区 */}
-          <div className="relative h-36 flex-shrink-0 bg-gradient-to-br from-orange-200 to-amber-100">
-            {cur.photo ? (
-              // AMap 图片域名，用原生 img 绕开 next/image 远程白名单
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={cur.photo}
-                alt={cur.name}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-400">
-                <MapPin className="h-10 w-10" />
+      <div className="flex h-full w-full flex-col justify-end gap-2">
+        {/* 卡片上方这一行：左边导航工具条、右边关闭按钮，两者同一条水平线 */}
+        <div className="flex w-full items-center justify-between gap-2">
+          {/* 工具条：前后切换 + 缩放至此地点 */}
+          <div className="flex items-center rounded-full border border-gray-200 bg-white px-1.5 py-1 shadow-lg pointer-events-auto">
+            {showNav ? (
+              <div className="flex items-center gap-0.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={navBtn}
+                  aria-label="上一个地点"
+                  disabled={!prevItem}
+                  onClick={() => prevItem && selectItem(prevItem.id)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-1 text-xs text-gray-600 whitespace-nowrap">
+                  {total}个中的第{curIndex + 1}个
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={navBtn}
+                  aria-label="下一个地点"
+                  disabled={!nextItem}
+                  onClick={() => nextItem && selectItem(nextItem.id)}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <span className="mx-1 h-4 w-px bg-gray-200" />
               </div>
-            )}
-
+            ) : null}
             <Button
-              variant="secondary"
-              size="icon"
-              className="absolute top-2 right-2 h-8 w-8 rounded-full shadow-sm"
-              aria-label="关闭详情"
-              onClick={clearSelection}
+              variant="ghost"
+              size="sm"
+              className={cn(navBtn, "h-7")}
+              aria-label="缩放至此地点"
+              title="缩放至此地点（放到地图上半屏）"
+              disabled={cur.lng == null || cur.lat == null || !zoomToPlace}
+              onClick={() =>
+                cur.lng != null && cur.lat != null && zoomToPlace?.([cur.lng, cur.lat])
+              }
             >
-              <X className="h-4 w-4" />
+              <Crosshair className="h-3.5 w-3.5" />
+              缩放至此地点
             </Button>
           </div>
 
-          {/* 正文 */}
-          <div className="p-4 overflow-y-auto space-y-4 min-h-0">
-            {/* 标题行 + 已访问开关 */}
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  {/* 机场/酒店自动生成的地点用来源图标，其余用容器色 + 序号 */}
-                  <PlaceKindBadge item={cur} number={number} color={color} />
-                  <h3 className="text-lg font-semibold text-gray-900 leading-snug wrap-break-word">
-                    {cur.name}
-                  </h3>
+          {/* 关闭按钮：跟工具条同一条线，落在卡片右端 */}
+          <Button
+            variant="secondary"
+            size="icon"
+            className="pointer-events-auto h-8 w-8 flex-shrink-0 rounded-full shadow-lg"
+            aria-label="关闭详情"
+            onClick={clearSelection}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* 单一容器：文字通栏排，图只是右上角一块圆角图，占住标题/地址那几行的留白。
+            滚动也交给 Card 自己 —— 滚动条就落在卡片最右，不会卡在中间 */}
+        <Card className="w-full pointer-events-auto shadow-2xl rounded-2xl p-4 gap-0 overflow-y-auto overflow-x-hidden max-h-[55%]">
+          {/* 两列网格：左边文字，右边图；下面那些通栏的用 col-span-2。
+              用网格而不是 float —— 环绕是"文字绕到图底下"，这里要的是
+              "图就占住右上角那一块"，网格是确定的，不依赖行盒怎么算 */}
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-4">
+            {/* 左上：标题 + 详情行 */}
+            <div className="min-w-0 space-y-4">
+              {/* 标题行 + 已访问开关 */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {/* 机场/酒店自动生成的地点用来源图标，其余用容器色 + 序号 */}
+                    <PlaceKindBadge item={cur} number={number} color={color} />
+                    <h3 className="text-lg font-semibold text-gray-900 leading-snug wrap-break-word">
+                      {cur.name}
+                    </h3>
+                  </div>
+                  {myPeers.length > 1 && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      同地点在 {myPeers.length} 个容器各有实例
+                    </p>
+                  )}
                 </div>
-                {myPeers.length > 1 && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    同地点在 {myPeers.length} 个容器各有实例
+                <VisitedButton
+                  visited={cur.visited}
+                  onToggle={toggleVisited}
+                  className="flex-shrink-0"
+                />
+              </div>
+
+              {/* 详细信息 */}
+              {infoRows.length > 0 && (
+                <div className="space-y-1.5 text-sm text-gray-600">
+                  {infoRows.map((row, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span className="text-gray-400 flex-shrink-0 mt-0.5">
+                        {row.icon}
+                      </span>
+                      <span className="wrap-break-word">{row.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 地点信息（高德补充字段） */}
+              {factRows.length > 0 && (
+                <div className="space-y-1.5 text-sm text-gray-600">
+                  {factRows.map((row, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span className="text-gray-400 flex-shrink-0 mt-0.5">
+                        {row.icon}
+                      </span>
+                      <span className="flex-shrink-0 text-gray-400">{row.label}</span>
+                      <span className="wrap-break-word">{row.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 右上：图。self-start 让它保持自己的比例、不被左边文字拉高；
+                aspect 固定成 4:3，这样 object-cover 只裁一点边，
+                不会像之前那个"竖长条"框一样把照片放大好几倍 */}
+            <div
+              className={cn(
+                "group/photo relative aspect-4/3 w-40 self-start overflow-hidden rounded-xl sm:w-56",
+                cur.photo
+                  ? "bg-gray-100"
+                  : "bg-gradient-to-br from-orange-200 to-amber-100"
+              )}
+            >
+              {cur.photo ? (
+                <>
+                  {/* AMap 图片域名，用原生 img 绕开 next/image 远程白名单 */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={cur.photo}
+                    alt={cur.name}
+                    className="h-full w-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    className="absolute inset-0 cursor-zoom-in"
+                    aria-label="查看大图"
+                    onClick={() => setLightbox(cur.photo)}
+                  />
+                  {/* 手机上没 hover，这枚药丸就常驻；桌面端 hover 才浮出来 */}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="absolute bottom-1.5 left-1/2 z-10 h-7 -translate-x-1/2 gap-1 px-2 text-xs shadow-sm opacity-100 transition-opacity sm:opacity-0 sm:group-hover/photo:opacity-100 sm:focus-visible:opacity-100"
+                    onClick={() => setShowPicker(true)}
+                  >
+                    <ImagePlus className="h-3.5 w-3.5" />
+                    换图
+                  </Button>
+                </>
+              ) : (
+                // 没图时整块就是一个入口，免得"没有图 → 也没地方点"
+                <button
+                  type="button"
+                  className="absolute inset-1.5 flex flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-orange-300 text-orange-400/80 transition-colors hover:border-orange-400 hover:text-orange-500"
+                  onClick={() => setShowPicker(true)}
+                >
+                  <ImagePlus className="h-6 w-6" />
+                  <span className="text-xs">选一张图</span>
+                </button>
+              )}
+            </div>
+
+            {/* 下面这些一律通栏 */}
+            <div className="col-span-2 space-y-4">
+              {/* 高德给的其余照片，点开看大图 */}
+              {otherPhotos.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {otherPhotos.map((url) => (
+                    <button
+                      key={url}
+                      type="button"
+                      onClick={() => setLightbox(url)}
+                      className="h-14 w-20 flex-shrink-0 overflow-hidden rounded-md border border-gray-200 cursor-zoom-in"
+                      aria-label="查看大图"
+                    >
+                      {/* AMap 图片域名，用原生 img 绕开 next/image 远程白名单 */}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={url}
+                        alt={cur.name}
+                        className="h-full w-full object-cover"
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* 简介：这个地方"是什么"（资料）。和 note 分工不同 ——
+                  note 是"我要做什么"，显示在收起态的那张卡上 */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-sm font-medium text-gray-700">简介</h4>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 gap-1 text-xs text-gray-500"
+                      disabled={!aiConfig || generating}
+                      title={
+                        aiConfig
+                          ? `用 ${aiConfig.provider.label} 生成`
+                          : "先去 AI 助手配置厂商和 Key"
+                      }
+                      onClick={generateDescription}
+                    >
+                      {generating ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" />
+                      )}
+                      {generating ? "生成中…" : "生成简介"}
+                    </Button>
+                    {!editingDesc && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 gap-1 text-xs text-gray-500"
+                        onClick={startEditDesc}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        编辑
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {editingDesc ? (
+                  <div className="space-y-2">
+                    <Textarea
+                      rows={4}
+                      value={descDraft}
+                      onChange={(e) => setDescDraft(e.target.value)}
+                      placeholder="这是个什么样的地方…"
+                      className="text-sm resize-none"
+                    />
+                    {/* 刻意不做"失焦自动保存"：简介是一段成文的资料，误触写库不值得 */}
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditingDesc(false)}
+                      >
+                        取消
+                      </Button>
+                      <Button size="sm" onClick={saveDescription}>
+                        保存
+                      </Button>
+                    </div>
+                  </div>
+                ) : shownDesc ? (
+                  <p className="text-sm text-gray-600 whitespace-pre-wrap wrap-break-word">
+                    {shownDesc}
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-400">还没有简介</p>
+                )}
+              </div>
+
+              {/* 属于哪些图层 */}
+              <div className="flex flex-wrap items-center gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 text-gray-700"
+                    >
+                      <Layers className="h-4 w-4" />
+                      属于哪些图层
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-72 max-h-80 overflow-y-auto">
+                    <DropdownMenuLabel>
+                      勾选让该地点也出现在其他图层（复制一份）
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {layerOptions.map((o) => (
+                      <DropdownMenuCheckboxItem
+                        key={o.key}
+                        checked={o.present}
+                        onCheckedChange={(checked) =>
+                          applyLayer(o.container, Boolean(checked))
+                        }
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="h-3.5 w-3.5 rounded-full inline-block flex-shrink-0"
+                            style={{ backgroundColor: o.color }}
+                          />
+                          {o.label}
+                        </span>
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {presentTitles.length > 0 && (
+                  <p className="text-xs text-gray-500 flex-1 min-w-0">
+                    出现在：{presentTitles.join("、")}
                   </p>
                 )}
               </div>
-              <VisitedButton
-                visited={cur.visited}
-                onToggle={toggleVisited}
-                className="flex-shrink-0"
-              />
-            </div>
-
-            {/* 详细信息 */}
-            {infoRows.length > 0 && (
-              <div className="space-y-1.5 text-sm text-gray-600">
-                {infoRows.map((row, i) => (
-                  <div key={i} className="flex items-start gap-2">
-                    <span className="text-gray-400 flex-shrink-0 mt-0.5">
-                      {row.icon}
-                    </span>
-                    <span className="wrap-break-word">{row.text}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 属于哪些图层 */}
-            <div className="flex flex-wrap items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2 text-gray-700"
-                  >
-                    <Layers className="h-4 w-4" />
-                    属于哪些图层
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-72 max-h-80 overflow-y-auto">
-                  <DropdownMenuLabel>
-                    勾选让该地点也出现在其他图层（复制一份）
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {layerOptions.map((o) => (
-                    <DropdownMenuCheckboxItem
-                      key={o.key}
-                      checked={o.present}
-                      onCheckedChange={(checked) =>
-                        applyLayer(o.container, Boolean(checked))
-                      }
-                      onSelect={(e) => e.preventDefault()}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span
-                          className="h-3.5 w-3.5 rounded-full inline-block flex-shrink-0"
-                          style={{ backgroundColor: o.color }}
-                        />
-                        {o.label}
-                      </span>
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              {presentTitles.length > 0 && (
-                <p className="text-xs text-gray-500 flex-1 min-w-0">
-                  出现在：{presentTitles.join("、")}
-                </p>
-              )}
             </div>
           </div>
         </Card>
       </div>
+
+      {/* 大图：近乎全屏，object-contain 保证不被裁。
+          整块跟着 lightbox 走 —— 只切 open 的话，关闭动画那几百毫秒里内容还挂着，
+          而 src 已经没值了，会往 img 里塞一个空串 */}
+      {lightbox && (
+        <Dialog open onOpenChange={(o) => !o && setLightbox(null)}>
+          <DialogContent className="w-fit max-w-[92vw] border-0 bg-transparent p-2 shadow-none sm:max-w-[92vw]">
+            {/* sr-only 的标题不能省：Radix 会因为没有标题报 a11y 警告 */}
+            <DialogTitle className="sr-only">{cur.name}</DialogTitle>
+            {/* AMap 图片域名，用原生 img 绕开 next/image 远程白名单 */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={lightbox}
+              alt={cur.name}
+              className="h-auto max-h-[85vh] w-auto max-w-full rounded-lg object-contain"
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      <ImagePickerDialog
+        open={showPicker}
+        onOpenChange={setShowPicker}
+        onSelect={handlePhotoSelect}
+        searchQuery={cur.name}
+        subject="地点图片"
+        maxBytes={1 << 20}
+      />
     </div>
   );
 }

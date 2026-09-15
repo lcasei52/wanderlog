@@ -223,6 +223,45 @@ export function useAMap(options: UseAMapOptions = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 只在组件挂载时执行一次（options 由调用方保证首帧即定）
 
+  /**
+   * 容器尺寸变了就 map.resize()。
+   *
+   * 为什么必须有：地图容器是 flex-1，侧边栏展开/收起（宽度过渡）和窗口缩放都会改变它，
+   * 而 AMap 不会自己感知（没开 resizeEnable）。不 resize 有两个后果：
+   *   1. 画布被拉伸变形；
+   *   2. **getSize() 一直返回缓存尺寸** —— focusOnPoint / isPointVisible / fitPoints
+   *      三处都拿它算高度，"缩放至此地点"和"上半屏是否可见"会全部偏掉。
+   * 以前只监听 window 的话，侧边栏折叠这种"窗口没变、容器变了"的情况根本覆盖不到。
+   *
+   * 为什么防抖：200ms 的宽度动画里 ResizeObserver 每帧都触发，每帧都去动 canvas
+   * 等于每帧重排、重取瓦片。等它停稳再 resize 一次就够。
+   *
+   * 为什么依赖 [map]：map 只在 finalize（AMap 派发 complete、投影可用）时才 setState，
+   * 所以这个 effect 不可能在投影就绪前跑 —— 正好满足上面 Pixel(NaN, NaN) 那两条注释
+   * 反复强调的约束。
+   */
+  useEffect(() => {
+    const el = mapRef.current;
+    if (!map || !el || typeof ResizeObserver === "undefined") return;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ro = new ResizeObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        // 走 ref 而不是闭包里的 map：卸载时上面那个 effect 的 cleanup 会先 destroy
+        // 实例、再把 ref 置空，所以这里拿到的就是 null，绝不会对已销毁的实例调方法。
+        mapInstanceRef.current?.resize?.();
+      }, 150);
+    });
+    ro.observe(el);
+
+    return () => {
+      ro.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [map]);
+
   /** 增量更新 markers：只增删/替换发生变化的，不全量重建 */
   const updateMarkers = useCallback((markers: MapMarker[]) => {
     const AMap = amapNsRef.current;

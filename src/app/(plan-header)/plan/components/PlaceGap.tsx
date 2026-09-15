@@ -144,9 +144,10 @@ interface PlaceDayGapProps {
  *
  * 1. 靠左一条竖向点线，把同一天的卡片"串"起来 —— 点的位置对齐卡片里那个
  *    序号圆标的中心（卡片 px-3 + 圆标 h-5 的一半 = 22px）。
- * 2. 靠右一行"这段路怎么走"：交通方式图标 + 耗时 · 距离 + 下拉箭头，
+ * 2. 点线右边一行"这段路怎么走"：交通方式图标 + 耗时 · 距离 + 下拉箭头，
  *    末尾是「路线」（跳高德导航页，并把我们地图上的那条线画出来）。
  *    点这行其余地方出下拉：三种方式的时间/距离、「隐藏路线」、「更改默认设置」。
+ *    这一行和酒店小字都从 left-8 起，在点线右侧排成同一条竖列。
  *
  * 查询是懒加载的：滚进视野才查当前模式，下拉展开再补另外两种（见 routes-context）。
  * 起点/终点任一端没有坐标 → 只留那条点线。
@@ -244,7 +245,7 @@ export function PlaceDayGap({ from, to, dragging }: PlaceDayGapProps) {
           variant="ghost"
           size="sm"
           title="显示路线"
-          className="absolute right-0 top-1/2 h-5 -translate-y-1/2 px-1.5 text-[11px] font-normal text-gray-400 opacity-0 transition-opacity group-hover/gap:opacity-100 hover:text-gray-600 focus-visible:opacity-100"
+          className="absolute left-8 top-1/2 h-5 -translate-y-1/2 px-1.5 text-[11px] font-normal text-gray-400 opacity-0 transition-opacity group-hover/gap:opacity-100 hover:text-gray-600 focus-visible:opacity-100"
           onClick={() => showGap(gap)}
         >
           <Route className="h-3 w-3" />
@@ -252,9 +253,9 @@ export function PlaceDayGap({ from, to, dragging }: PlaceDayGapProps) {
         </Button>
       )}
 
-      {/* 靠右那行：模式图标 + 耗时 · 距离 + 下拉箭头，然后是「路线」 */}
+      {/* 点线右边那行：模式图标 + 耗时 · 距离 + 下拉箭头，然后是「路线」 */}
       {!dragging && !hidden && hasCoords && (
-        <div className="absolute inset-y-0 right-0 flex items-center gap-0.5">
+        <div className="absolute inset-y-0 left-8 flex items-center gap-0.5">
           <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger asChild>
               <Button
@@ -284,7 +285,7 @@ export function PlaceDayGap({ from, to, dragging }: PlaceDayGapProps) {
                 <ChevronDown className="h-3 w-3" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuContent align="start" className="w-56">
               {ROUTE_MODES.map((m) => {
                 const Icon = MODE_ICON[m];
                 const s = points

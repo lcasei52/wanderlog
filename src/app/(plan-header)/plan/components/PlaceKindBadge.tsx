@@ -7,10 +7,10 @@ import { cn } from "@/lib/utils";
 
 interface PlaceKindBadgeProps {
   item: Pick<PlaceItem, "sourceKind">;
-  /** 手动地点的容器内序号（自动生成的地点不看这个） */
-  number: number;
-  /** 手动地点的容器色（自动生成的地点不看这个） */
-  color: string;
+  /** 手动地点的容器内序号（自动生成的地点不看这个，可以不传） */
+  number?: number;
+  /** 手动地点的容器色（自动生成的地点不看这个，可以不传） */
+  color?: string;
   className?: string;
 }
 

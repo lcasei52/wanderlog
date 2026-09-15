@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  ArrowLeft,
   ArrowRight,
   Calendar as CalendarIcon,
   Loader2,
@@ -26,11 +27,17 @@ import { addDays, differenceInCalendarDays, format } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { toast } from "sonner";
 import FlightCard from "./FlightCard";
+import FlightFormFields, {
+  emptyDraft,
+  validateDraft,
+  type FlightDraft,
+} from "./FlightFormFields";
 import SortableCardGroup from "@/components/SortableCardGroup";
 import { useBookings } from "@/context/bookings-context";
 import { usePlaces } from "@/context/places-context";
 import type { PlaceItemInput } from "@/types/place";
 import type { FlightApiResult } from "@/types/flight";
+import { getAirportByName, getAirportInfo } from "@/lib/airport-coordinates";
 import ListShell from "./ListShell";
 
 /** 源数据时间是 UTC，统一 +8 转成北京时间（国内航班无夏令时） */
@@ -52,11 +59,17 @@ export default function FlightsList() {
   const [flightError, setFlightError] = useState<string | null>(null);
   const [flightDate, setFlightDate] = useState<Date | undefined>();
   const [flightAdding, setFlightAdding] = useState(false);
+  // 弹窗的两种模式：搜索（走 AviationStack）和手动填写（API 查不到时的出路）
+  const [manualMode, setManualMode] = useState(false);
+  const [manualDraft, setManualDraft] = useState<FlightDraft>(() => emptyDraft());
 
   const tripDisabled =
     dateRange?.from && dateRange?.to
       ? { before: dateRange.from, after: dateRange.to }
       : undefined;
+
+  /** 行程第一天 "yyyy-MM-dd"；两个模式的新建日期都默认落在这里 */
+  const tripStartIso = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : "";
 
   const openFlightDialog = () => {
     setFlightQuery("");
@@ -64,8 +77,24 @@ export default function FlightsList() {
     setFlightError(null);
     setFlightSearching(false);
     setFlightDate(dateRange?.from);
+    setManualMode(false);
+    setManualDraft(emptyDraft(tripStartIso));
     setShowFlightDialog(true);
   };
+
+  /** 切到手动填写：把刚才敲的航班号带过去 —— 查不到才发现要手填，不该让人再敲一遍 */
+  const enterManualMode = () => {
+    setManualDraft({
+      ...emptyDraft(tripStartIso),
+      flightNumber: flightQuery.trim().toUpperCase(),
+    });
+    setManualMode(true);
+  };
+
+  const setManualField = <K extends keyof FlightDraft>(
+    key: K,
+    value: FlightDraft[K]
+  ) => setManualDraft((prev) => ({ ...prev, [key]: value }));
 
   const searchFlight = async () => {
     const code = flightQuery.trim().toUpperCase();
@@ -139,12 +168,15 @@ export default function FlightsList() {
       const created = await addFlight({
         from: departure.city ?? departure.code,
         fromCity: departure.airport,
+        fromCode: departure.code,
         to: arrival.city ?? arrival.code,
         toCity: arrival.airport,
+        toCode: arrival.code,
         date: depDateIso,
         departureTime: format(depBJ, "HH:mm"),
         arrivalTime: format(arrBJ, "HH:mm"),
         flightNumber: result.flightNumber,
+        airline: result.airline, // 查回来的航司要一起入库，否则只显示在弹窗预览里、卡片上没有
         arrivalDate: arrDateIso,
         arrivalLng: arrival.lng,
         arrivalLat: arrival.lat,
@@ -174,6 +206,79 @@ export default function FlightsList() {
       setFlightQuery("");
     } catch (error) {
       console.error("添加航班失败:", error);
+      toast.error("添加失败，请重试");
+    } finally {
+      setFlightAdding(false);
+    }
+  };
+
+  /**
+   * 手动添加：不查 API，直接用表单里的值入库。
+   *
+   * 机场地点**能挂就挂**：三字码是从下拉里选出来的（手打的机场名如果正好等于
+   * 表里的全称，也认）。有码才拼得出 `airport-PEK`，同一个机场经 API 添加和经
+   * 手动添加才归并成同一个 groupKey，不会在当天列表里出现两条。
+   * 没码（表外的机场）就只进 Flights 列表 —— 硬拿机场名拼 key 会拼出第二个 key。
+   */
+  const handleManualAdd = async () => {
+    const missing = validateDraft(manualDraft, { requireCities: true });
+    if (missing) {
+      toast.error(`请填写${missing}`);
+      return;
+    }
+
+    const fromCode =
+      manualDraft.fromCode || getAirportByName(manualDraft.fromCity)?.code || "";
+    const toCode =
+      manualDraft.toCode || getAirportByName(manualDraft.toCity)?.code || "";
+    // 到达日留空按当天算 —— 国内航段绝大多数当天到；真的跨天该自己填到达日期
+    const arrDateIso = manualDraft.arrivalDate || manualDraft.date;
+
+    setFlightAdding(true);
+    try {
+      const created = await addFlight({
+        flightNumber: manualDraft.flightNumber.trim(),
+        airline: manualDraft.airline.trim() || null,
+        from: manualDraft.from.trim(),
+        fromCity: manualDraft.fromCity.trim(),
+        fromCode: fromCode || null,
+        to: manualDraft.to.trim(),
+        toCity: manualDraft.toCity.trim(),
+        toCode: toCode || null,
+        date: manualDraft.date,
+        departureTime: manualDraft.departureTime,
+        arrivalTime: manualDraft.arrivalTime,
+        arrivalDate: manualDraft.arrivalDate || null,
+      });
+      if (!created) {
+        toast.error("添加失败，请重试");
+        return;
+      }
+      // 有码才挂：坐标查得到就带坐标（地图上能画），查不到也照样挂（只在当天列表里）
+      if (fromCode) {
+        const info = getAirportInfo(fromCode);
+        addAirportItem(manualDraft.date, created.id, {
+          code: fromCode,
+          airport: manualDraft.fromCity.trim(),
+          city: manualDraft.from.trim() || null,
+          lng: info?.lng ?? null,
+          lat: info?.lat ?? null,
+        });
+      }
+      if (toCode) {
+        const info = getAirportInfo(toCode);
+        addAirportItem(arrDateIso, created.id, {
+          code: toCode,
+          airport: manualDraft.toCity.trim(),
+          city: manualDraft.to.trim() || null,
+          lng: info?.lng ?? null,
+          lat: info?.lat ?? null,
+        });
+      }
+      toast.success("航班已添加");
+      setShowFlightDialog(false);
+    } catch (error) {
+      console.error("手动添加航班失败:", error);
       toast.error("添加失败，请重试");
     } finally {
       setFlightAdding(false);
@@ -220,10 +325,46 @@ export default function FlightsList() {
 
       {/* 航班弹窗 */}
       <Dialog open={showFlightDialog} onOpenChange={setShowFlightDialog}>
-        <DialogContent>
+        {/*
+          sm:max-w-lg：默认的 max-w-sm（384px）塞两列表单，每列只剩 ~170px，
+          日期按钮会被 truncate 截成「2024年9月…」。两种模式共用一个宽度，
+          切换时弹窗宽度不会跳一下。
+          max-h + overflow-y-auto 防止手动表单在矮窗口里超出屏幕；日期面板不会被它裁掉，
+          因为 PopoverContent 走 Portal 挂在 body 上（components/ui/popover.tsx:26）。
+        */}
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>添加航班</DialogTitle>
+            <DialogTitle>{manualMode ? "手动添加航班" : "添加航班"}</DialogTitle>
+            {manualMode && (
+              <Button
+                type="button"
+                variant="link"
+                className="h-auto w-fit p-0 text-xs text-gray-500 hover:text-gray-800"
+                onClick={() => setManualMode(false)}
+              >
+                <ArrowLeft className="size-3.5" />
+                返回搜索
+              </Button>
+            )}
           </DialogHeader>
+
+          {manualMode && (
+            <div className="space-y-3 py-2">
+              <FlightFormFields
+                draft={manualDraft}
+                onChange={setManualField}
+                disabled={tripDisabled}
+                fallbackMonth={dateRange?.from}
+              />
+              <p className="text-xs text-gray-400">
+                机场从下拉里选中的话，出发/到达机场会各自加进当天行程（地图上也会出现）；
+                完全手打、表里没有的机场挂不上，只留在这个 Flights 列表里。
+              </p>
+            </div>
+          )}
+
+          {/* 搜索面板（两个面板互斥，各判各的，省得整块重新缩进） */}
+          {!manualMode && (
           <div className="space-y-4 py-4">
             <div>
               <Label htmlFor="flightNumber">航班号</Label>
@@ -242,7 +383,7 @@ export default function FlightsList() {
                   variant="outline"
                   onClick={searchFlight}
                   disabled={!flightQuery.trim() || flightSearching}
-                  className="flex-shrink-0"
+                  className="shrink-0"
                 >
                   {flightSearching ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -253,11 +394,32 @@ export default function FlightsList() {
                 </Button>
               </div>
               <p className="text-xs text-gray-400 mt-1">
-                输入完整航班号，查询该航班的真实时刻与航线（国内航班）
+                输入完整航班号，查询该航班的真实时刻与航线（国内航班）。查不到？
+                <Button
+                  type="button"
+                  variant="link"
+                  className="h-auto p-0 text-xs text-orange-600 hover:text-orange-700"
+                  onClick={enterManualMode}
+                >
+                  手动填写
+                </Button>
               </p>
             </div>
 
-            {flightError && <p className="text-sm text-red-500">{flightError}</p>}
+            {flightError && (
+              <div className="flex items-center gap-1 text-sm">
+                <span className="text-red-500">{flightError}</span>
+                {/* 查不到是常态（免费层只回当天排班），这里给一条出路 */}
+                <Button
+                  type="button"
+                  variant="link"
+                  className="h-auto p-0 text-sm text-orange-600 hover:text-orange-700"
+                  onClick={enterManualMode}
+                >
+                  手动填写
+                </Button>
+              </div>
+            )}
 
             {flightResult &&
               flightResult.departure.time &&
@@ -322,14 +484,20 @@ export default function FlightsList() {
                 </div>
               )}
           </div>
+          )}
+
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setShowFlightDialog(false)}>
               取消
             </Button>
+            {/* 两种模式共用这个按钮，只有能不能点 / 点了做什么不同 */}
             <Button
               className="bg-orange-500 hover:bg-orange-600"
-              disabled={!flightResult || !flightDate || flightAdding}
-              onClick={handleAddFlight}
+              disabled={
+                flightAdding ||
+                (!manualMode && (!flightResult || !flightDate))
+              }
+              onClick={manualMode ? handleManualAdd : handleAddFlight}
             >
               {flightAdding ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

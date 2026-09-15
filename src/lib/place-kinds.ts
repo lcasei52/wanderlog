@@ -59,3 +59,15 @@ export const AUTO_PLACE_ICON_PATHS: Record<AutoPlaceKind, string[]> = {
 export function canDragPlace(item: Pick<PlaceItem, "sourceKind">): boolean {
   return placeKindOf(item) !== "hotel";
 }
+
+/**
+ * 该实例能不能从容器里删掉。
+ * 酒店行是 hotels 表那一行的**投影**（见 PlaceCard 的 HotelLine）—— 它的生命周期
+ * 归父行管：要拿掉它就去改酒店日期或删掉整个住宿。在当天列表里删一张投影没有意义，
+ * 下次改酒店日期照样会长回来。
+ *
+ * 机场（航班生成的）不在此列：它仍是可编辑的卡片，也就仍由用户自己决定留不留。
+ */
+export function canDeletePlace(item: Pick<PlaceItem, "sourceKind">): boolean {
+  return placeKindOf(item) !== "hotel";
+}

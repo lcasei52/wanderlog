@@ -1,6 +1,14 @@
 "use client";
 
-import { Plane, Hotel, Car, Train, Paperclip, MoreHorizontal } from "lucide-react";
+import {
+  Plane,
+  Hotel,
+  Car,
+  Train,
+  Paperclip,
+  MoreHorizontal,
+  Bed,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useBookings, type BookingVariant } from "@/context/bookings-context";
 
@@ -28,7 +36,7 @@ export default function BookingCard() {
       hasDot: flights.length > 0,
     },
     {
-      icon: Hotel,
+      icon: Bed,
       label: "住宿",
       count: hotels.length,
       variant: "hotels" as const,

@@ -119,7 +119,20 @@ export default function DetailContent({
     computeActive();
     root.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule);
+
+    // 侧边栏展开/收起时窗口尺寸没变（window.resize 不触发），但这一列在变宽，
+    // 正文重新折行 → 各锚点 top 全变，参考线扫到的 section/subId 可能已经过期。
+    // 所以还要盯容器自身的尺寸；和 scroll 复用同一个 schedule（内部 rAF 合并），
+    // 动画期间每帧最多算一次，且读写都在观察者回调之外，不会触发
+    // "ResizeObserver loop completed with undelivered notifications"。
+    const ro =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => schedule());
+    ro?.observe(root);
+
     return () => {
+      ro?.disconnect();
       if (raf) cancelAnimationFrame(raf);
       root.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
@@ -142,7 +155,14 @@ export default function DetailContent({
   };
 
   return (
-    <div ref={contentRef} className="flex-1 overflow-y-auto bg-gray-50">
+    /*
+      scrollbar-gutter-stable：侧边栏展开/收起时这一列宽度在变，正文可能在触发
+      滚动条的临界点上来回跨一次；不预留槽位会在动画中途多出约 17px 的二次跳动。
+    */
+    <div
+      ref={contentRef}
+      className="flex-1 overflow-y-auto bg-gray-50 scrollbar-gutter-stable"
+    >
       {/* 背景图区域 */}
       <div className="relative h-64 w-full">
         {trip?.coverImageUrl || trip?.coverImageData ? (
@@ -287,7 +307,8 @@ export default function DetailContent({
         open={showImagePicker}
         onOpenChange={setShowImagePicker}
         onSelect={handleImageSelect}
-        destinationName={trip?.destination?.name}
+        searchQuery={trip?.destination?.name}
+        subject="行程封面"
       />
     </div>
   );

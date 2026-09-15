@@ -31,6 +31,77 @@ export async function createFlight(
 }
 
 /**
+ * 空串/纯空白 → null。航司与到达日期可空，"清空输入框"要落成 NULL 而不是 ""。
+ * 不在 places.ts 里导出复用：那是 "use server" 文件，导出必须是 async 函数。
+ */
+function stringOrNull(v: unknown): string | null {
+  return typeof v === "string" && v.trim() !== "" ? v : null;
+}
+
+/**
+ * 可手动编辑的字段（航班卡展开后的表单）。
+ * 不含机场坐标（arrivalLng/arrivalLat）：那是给"自动挂到当天"的机场地点用的，
+ * 而编辑航班刻意**不动**那些地点（由用户在当天列表里自己改/删），改坐标也没有消费方。
+ */
+export type FlightPatch = Partial<
+  Pick<
+    NewFlight,
+    | "flightNumber"
+    | "airline"
+    | "from"
+    | "fromCity"
+    | "fromCode"
+    | "date"
+    | "departureTime"
+    | "to"
+    | "toCity"
+    | "toCode"
+    | "arrivalDate"
+    | "arrivalTime"
+  >
+>;
+
+/**
+ * 更新航班：只把**传进来的**字段写进 set()（undefined 的一律不碰），
+ * 返回整行供前端替换本地态；没命中返回 null。
+ */
+export async function updateFlightById(
+  id: string,
+  patch: FlightPatch
+): Promise<Flight | null> {
+  const db = getDb();
+  const [row] = await db
+    .update(flights)
+    .set({
+      ...(patch.flightNumber !== undefined
+        ? { flightNumber: patch.flightNumber }
+        : {}),
+      ...(patch.airline !== undefined ? { airline: stringOrNull(patch.airline) } : {}),
+      ...(patch.from !== undefined ? { from: patch.from } : {}),
+      ...(patch.fromCity !== undefined ? { fromCity: patch.fromCity } : {}),
+      // 三字码可空：手打的机场没有码，清空要落成 NULL 而不是 ""
+      ...(patch.fromCode !== undefined
+        ? { fromCode: stringOrNull(patch.fromCode) }
+        : {}),
+      ...(patch.date !== undefined ? { date: patch.date } : {}),
+      ...(patch.departureTime !== undefined
+        ? { departureTime: patch.departureTime }
+        : {}),
+      ...(patch.to !== undefined ? { to: patch.to } : {}),
+      ...(patch.toCity !== undefined ? { toCity: patch.toCity } : {}),
+      ...(patch.toCode !== undefined ? { toCode: stringOrNull(patch.toCode) } : {}),
+      ...(patch.arrivalDate !== undefined
+        ? { arrivalDate: stringOrNull(patch.arrivalDate) }
+        : {}),
+      ...(patch.arrivalTime !== undefined ? { arrivalTime: patch.arrivalTime } : {}),
+    })
+    .where(eq(flights.id, id))
+    .returning();
+  if (row) revalidatePath(`/plan/${row.tripId}`);
+  return row ?? null;
+}
+
+/**
  * 拖拽排序：按传入顺序把 position 重写成 0..n-1。
  * 只更新属于该行程的行（防止越权改到别人的行程）。
  */

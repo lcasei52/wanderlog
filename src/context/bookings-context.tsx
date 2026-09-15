@@ -13,11 +13,15 @@ import {
   createFlight,
   deleteFlightById,
   reorderFlights as reorderFlightsAction,
+  updateFlightById,
+  type FlightPatch,
 } from "@/actions/flights";
 import {
   createHotel,
   deleteHotelById,
   reorderHotels as reorderHotelsAction,
+  updateHotelById,
+  type HotelPatch,
 } from "@/actions/hotels";
 
 /** 按给定 id 顺序重排数组；不在列表里的行保持在后（正常不会出现） */
@@ -39,8 +43,12 @@ interface BookingsContextValue {
   setExpanded: (variant: BookingVariant, value: boolean) => void;
   toggleExpanded: (variant: BookingVariant) => void;
   addFlight: (data: Omit<NewFlight, "tripId">) => Promise<Flight | null>;
+  /** 改航班卡展开后表单里的字段；返回更新后的整行，失败/未命中返回 null */
+  updateFlight: (id: string, patch: FlightPatch) => Promise<Flight | null>;
   deleteFlight: (id: string) => Promise<void>;
   addHotel: (data: Omit<NewHotel, "tripId">) => Promise<Hotel | null>;
+  /** 改住宿卡展开后表单里的字段；返回更新后的整行，失败/未命中返回 null */
+  updateHotel: (id: string, patch: HotelPatch) => Promise<Hotel | null>;
   deleteHotel: (id: string) => Promise<void>;
   /** 拖拽排序：传入列表的完整 id 顺序，本地先重排再落库 */
   reorderFlights: (orderedIds: string[]) => Promise<void>;
@@ -92,6 +100,21 @@ export function BookingsProvider({
     [tripId],
   );
 
+  const updateFlight = useCallback(
+    async (id: string, patch: FlightPatch) => {
+      try {
+        const row = await updateFlightById(id, patch);
+        if (!row) return null;
+        setFlights((prev) => prev.map((f) => (f.id === id ? row : f)));
+        return row;
+      } catch (err) {
+        console.error("更新航班失败:", err);
+        return null;
+      }
+    },
+    [],
+  );
+
   const deleteFlight = useCallback(async (id: string) => {
     try {
       await deleteFlightById(id);
@@ -113,6 +136,21 @@ export function BookingsProvider({
       }
     },
     [tripId],
+  );
+
+  const updateHotel = useCallback(
+    async (id: string, patch: HotelPatch) => {
+      try {
+        const row = await updateHotelById(id, patch);
+        if (!row) return null;
+        setHotels((prev) => prev.map((h) => (h.id === id ? row : h)));
+        return row;
+      } catch (err) {
+        console.error("更新住宿失败:", err);
+        return null;
+      }
+    },
+    [],
   );
 
   const deleteHotel = useCallback(async (id: string) => {
@@ -157,8 +195,10 @@ export function BookingsProvider({
       setExpanded,
       toggleExpanded,
       addFlight,
+      updateFlight,
       deleteFlight,
       addHotel,
+      updateHotel,
       deleteHotel,
       reorderFlights,
       reorderHotels,
@@ -171,8 +211,10 @@ export function BookingsProvider({
       setExpanded,
       toggleExpanded,
       addFlight,
+      updateFlight,
       deleteFlight,
       addHotel,
+      updateHotel,
       deleteHotel,
       reorderFlights,
       reorderHotels,

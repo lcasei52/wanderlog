@@ -1,26 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { Calendar as CalendarIcon, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Calendar } from "@/components/ui/calendar";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { eachDayOfInterval, format } from "date-fns";
-import { zhCN } from "date-fns/locale";
 import { toast } from "sonner";
 import type { DateRange } from "react-day-picker";
 import HotelCard from "./HotelCard";
+import DateRangeField from "./DateRangeField";
 import SortableCardGroup from "@/components/SortableCardGroup";
 import PlaceSearchInput from "@/components/PlaceSearchInput";
 import type { PlaceSearchResult } from "@/hooks/usePlaceSearch";
@@ -222,37 +216,17 @@ export default function HotelsList() {
 
             <div>
               <Label>入住和退房日期</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="w-full mt-2 justify-start text-left font-normal"
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {hotelForm.dateRange?.from && hotelForm.dateRange?.to ? (
-                      <>
-                        {format(hotelForm.dateRange.from, "M月d日", { locale: zhCN })} -{" "}
-                        {format(hotelForm.dateRange.to, "M月d日", { locale: zhCN })}
-                      </>
-                    ) : (
-                      <span className="text-gray-500">选择入住和退房日期</span>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="range"
-                    selected={hotelForm.dateRange}
-                    onSelect={(range) =>
-                      setHotelForm((f) => ({ ...f, dateRange: range }))
-                    }
-                    disabled={tripDisabled}
-                    defaultMonth={hotelForm.dateRange?.from ?? dateRange?.from}
-                    numberOfMonths={2}
-                    locale={zhCN}
-                  />
-                </PopoverContent>
-              </Popover>
+              <div className="mt-2">
+                <DateRangeField
+                  value={hotelForm.dateRange}
+                  onChange={(range) =>
+                    setHotelForm((f) => ({ ...f, dateRange: range }))
+                  }
+                  disabled={tripDisabled}
+                  fallbackMonth={dateRange?.from}
+                  size="default"
+                />
+              </div>
               <p className="text-xs text-gray-400 mt-1">
                 只能选择行程日期范围内的日期
               </p>

@@ -90,6 +90,7 @@ export async function addPlaceItem(
       lng: typeof input.lng === "number" ? input.lng : null,
       lat: typeof input.lat === "number" ? input.lat : null,
       note: input.note ?? "",
+      description: stringOrNull(input.description),
       timeFrom: stringOrNull(input.timeFrom),
       timeTo: stringOrNull(input.timeTo),
       url: stringOrNull(input.url),
@@ -117,6 +118,9 @@ export async function updatePlaceItem(
       ...(patch.lng !== undefined ? { lng: patch.lng } : {}),
       ...(patch.lat !== undefined ? { lat: patch.lat } : {}),
       ...(patch.note !== undefined ? { note: patch.note ?? "" } : {}),
+      ...(patch.description !== undefined
+        ? { description: stringOrNull(patch.description) }
+        : {}),
       ...(patch.timeFrom !== undefined ? { timeFrom: stringOrNull(patch.timeFrom) } : {}),
       ...(patch.timeTo !== undefined ? { timeTo: stringOrNull(patch.timeTo) } : {}),
       ...(patch.url !== undefined ? { url: stringOrNull(patch.url) } : {}),
@@ -219,6 +223,8 @@ export async function copyPlaceItem(
       lng: source.lng,
       lat: source.lat,
       note: source.note ?? "",
+      // 简介也跟着副本走：它是"这个地方是什么"的资料，换个图层看还是同一个地方
+      description: source.description,
       timeFrom: source.timeFrom,
       timeTo: source.timeTo,
       url: source.url,
@@ -375,7 +381,8 @@ export async function syncPlacesSnapshot(
         name: it.name, address: it.address, tel: it.tel, type: it.type,
         photo: it.photo, lng: it.lng, lat: it.lat,
         listId: it.listId, dayDate: it.dayDate, position: it.position,
-        note: it.note, timeFrom: it.timeFrom, timeTo: it.timeTo,
+        note: it.note, description: it.description,
+        timeFrom: it.timeFrom, timeTo: it.timeTo,
         url: it.url, visited: it.visited, routeModeToNext: it.routeModeToNext,
       })
       .onConflictDoUpdate({
@@ -385,7 +392,8 @@ export async function syncPlacesSnapshot(
           name: it.name, address: it.address, tel: it.tel, type: it.type,
           photo: it.photo, lng: it.lng, lat: it.lat,
           listId: it.listId, dayDate: it.dayDate, position: it.position,
-          note: it.note, timeFrom: it.timeFrom, timeTo: it.timeTo,
+          note: it.note, description: it.description,
+          timeFrom: it.timeFrom, timeTo: it.timeTo,
           url: it.url, visited: it.visited, routeModeToNext: it.routeModeToNext,
         },
       });

@@ -131,6 +131,10 @@ export const placeItems = pgTable(
     position: integer("position").notNull().default(0), // 容器内的排序（序号 = 排序后的位次）
     // 可编辑内容
     note: text("note").notNull().default(""),
+    // 地点简介。和 note 的分工：note 是"我自己的备忘"（显示在收起态的卡上，
+    // 记的是要做的事）；description 是"这个地方是什么"（显示在详情卡里，
+    // 由 AI 生成或手写，属于资料而非待办）。
+    description: text("description"),
     timeFrom: text("time_from"), // "HH:mm"
     timeTo: text("time_to"), // "HH:mm"
     url: text("url"), // 附件粘贴链接
@@ -166,12 +170,15 @@ export const flights = pgTable("flights", {
     .references(() => trips.id, { onDelete: "cascade" }),
   from: text("from").notNull(), // 出发城市（中文）
   fromCity: text("from_city").notNull(), // 出发机场名（中文）
+  fromCode: text("from_code"), // 出发机场三字码；从机场表里选中的才有，手打的为 null
   to: text("to").notNull(), // 到达城市（中文）
   toCity: text("to_city").notNull(), // 到达机场名（中文）
+  toCode: text("to_code"), // 到达机场三字码；同上
   date: text("date").notNull(), // "2024-03-15"（出发日，展示用）
   departureTime: text("departure_time").notNull(), // "HH:mm"（北京时间）
   arrivalTime: text("arrival_time").notNull(), // "HH:mm"（北京时间）
   flightNumber: text("flight_number").notNull(),
+  airline: text("airline"), // 航司名；API 查回来的会带上，老数据为 null，手动编辑也可留空
   position: integer("position").notNull().default(0),
   // 新增字段：用于自动添加机场地点
   arrivalDate: text("arrival_date"), // "2024-09-24"（用于匹配 day）
