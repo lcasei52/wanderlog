@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { RotateCcw, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { usePlaces } from "@/context/places-context";
+import { useHistory } from "@/context/history-context";
 
 export default function UndoRedoButtons() {
-  const { undo, redo, canUndo, canRedo } = usePlaces();
+  // 撤销栈现在在 TripHistoryProvider 里（所有功能 provider 的外面），不再挂在 places 上
+  const { undo, redo, canUndo, canRedo } = useHistory();
   const [slot, setSlot] = useState<HTMLElement | null>(null);
 
   useEffect(() => {

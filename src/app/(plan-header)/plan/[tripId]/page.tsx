@@ -10,17 +10,39 @@ import {
   lists,
   placeItems,
   notes,
+  tripMembers,
+  expenses,
   type Flight,
   type Hotel,
   type List,
   type PlaceItem,
   type Note,
+  type TripMember,
+  type Expense,
 } from "@/db/schema";
 import { ensureTripPlaceLists } from "@/db/trip-place-lists";
+import { ensureTripSelfMember, SELF_MEMBER_EMAIL } from "@/db/trip-members";
+import { withRetry } from "@/db/retry";
 import { loadRoutePlans } from "@/db/route-plans";
 import type { CachedRoutePlan } from "@/lib/place-route";
 import type { TripSummary } from "@/types/trip";
 import TripWorkspace from "../components/TripWorkspace";
+
+/*
+ * 每次请求都现渲染，不做整页缓存。
+ *
+ * 这个页面上的数据分两类：一类客户端有完整副本（地点/费用/航班/住宿/成员/笔记，
+ * 各自的 context 拿下面这些 props 只当**初值**），另一类是真从服务端 props 读的
+ * （行程名/封面/图层初值/预算）。前一类对应的 action 现在全都不再 revalidatePath
+ * —— 但那样一来，服务端这份渲染结果就再没人来作废它了，万一 Next 把它当静态页
+ * 缓存住，F5 会直接吃到旧的 HTML。force-dynamic 把这条堵死：永远现算。
+ * （/home 也是这么写的。）
+ *
+ * 代价是每次进这个页面都要跑下面那 8 条查询；换来的是"这一页永远反映库里的当前
+ * 状态"这条不用推断的事实。要是哪天嫌 F5 慢，删掉这一行之前先去看 revalidatePath
+ * 那条规矩（actions/trips.ts 里 updateTripBudget 上方）。
+ */
+export const dynamic = "force-dynamic";
 
 // 把 DB 行转成可传给客户端组件的快照
 function toTripSummary(row: {
@@ -34,6 +56,8 @@ function toTripSummary(row: {
   destinationType: string | null;
   coverImageUrl: string | null;
   coverImageData: string | null;
+  budget: number | null;
+  budgetCurrency: string | null;
 }): TripSummary {
   const hasCoords =
     row.destinationName && row.destinationLng != null && row.destinationLat != null;
@@ -52,6 +76,8 @@ function toTripSummary(row: {
       : undefined,
     coverImageUrl: row.coverImageUrl,
     coverImageData: row.coverImageData,
+    budget: row.budget,
+    budgetCurrency: row.budgetCurrency,
   };
 }
 
@@ -64,24 +90,33 @@ function toTripSummary(row: {
  */
 const getTripRow = cache(async (tripId: string) => {
   const db = getDb();
-  const rows = await db
-    .select({
-      id: trips.id,
-      name: trips.name,
-      startDate: trips.startDate,
-      endDate: trips.endDate,
-      destinationName: trips.destinationName,
-      destinationLng: trips.destinationLng,
-      destinationLat: trips.destinationLat,
-      destinationType: trips.destinationType,
-      coverImageUrl: trips.coverImageUrl,
-      coverImageData: trips.coverImageData,
-      // 地图图层里被关掉的那些（初值，之后由 MapView 自己读写）
-      hiddenLayers: trips.hiddenLayers,
-    })
-    .from(trips)
-    .where(eq(trips.id, tripId))
-    .limit(1);
+  /*
+   * 重试必须在 cache() **里面**：cache() 缓存的是这个 promise 本身，若从外面
+   * 重试，拿到的是同一个已经 reject 的 promise，重试等于没做。
+   */
+  const rows = await withRetry(() =>
+    db
+      .select({
+        id: trips.id,
+        name: trips.name,
+        startDate: trips.startDate,
+        endDate: trips.endDate,
+        destinationName: trips.destinationName,
+        destinationLng: trips.destinationLng,
+        destinationLat: trips.destinationLat,
+        destinationType: trips.destinationType,
+        coverImageUrl: trips.coverImageUrl,
+        coverImageData: trips.coverImageData,
+        // 预算：BudgetCard 的进度条用；为 null 表示不设预算
+        budget: trips.budget,
+        budgetCurrency: trips.budgetCurrency,
+        // 地图图层里被关掉的那些（初值，之后由 MapView 自己读写）
+        hiddenLayers: trips.hiddenLayers,
+      })
+      .from(trips)
+      .where(eq(trips.id, tripId))
+      .limit(1),
+  );
   return rows[0] ?? null;
 });
 
@@ -113,36 +148,64 @@ export default async function TripDetailPage({
    * 本机到 Neon 一趟往返要一两秒，这一项就是十几秒的差别。
    *
    * 顺序上只有一个约束：这批读完成后，才轮到 ensureTripPlaceLists 那个写。
+   *
+   * 每个读各自套 withRetry（而不是把整个 Promise.all 包一层）：一次连接抖动只
+   * 会挂掉其中一个，包整批会让另外 7 个已经成功的白跑一遍。这也是"偶发进页面
+   * 直接跳红字错误界面"的正面修复 —— 以前任何一个读失败，整页就没有了。
    */
-  const [row, flightRows, hotelRows, itemRows, noteRows, fetchedListRows] =
+  const [row, flightRows, hotelRows, itemRows, noteRows, fetchedListRows, fetchedMemberRows, expenseRows] =
     await Promise.all([
       getTripRow(tripId),
       // position 是拖拽排序的落库顺序；旧数据 position 全为 0，靠 createdAt 兜底保持原顺序
-      db
-        .select()
-        .from(flights)
-        .where(eq(flights.tripId, tripId))
-        .orderBy(asc(flights.position), asc(flights.createdAt)),
-      db
-        .select()
-        .from(hotels)
-        .where(eq(hotels.tripId, tripId))
-        .orderBy(asc(hotels.position), asc(hotels.createdAt)),
-      db
-        .select()
-        .from(placeItems)
-        .where(eq(placeItems.tripId, tripId))
-        .orderBy(asc(placeItems.createdAt)),
-      db
-        .select()
-        .from(notes)
-        .where(eq(notes.tripId, tripId))
-        .orderBy(asc(notes.position), asc(notes.createdAt)),
-      db
-        .select()
-        .from(lists)
-        .where(eq(lists.tripId, tripId))
-        .orderBy(asc(lists.position)),
+      withRetry(() =>
+        db
+          .select()
+          .from(flights)
+          .where(eq(flights.tripId, tripId))
+          .orderBy(asc(flights.position), asc(flights.createdAt)),
+      ),
+      withRetry(() =>
+        db
+          .select()
+          .from(hotels)
+          .where(eq(hotels.tripId, tripId))
+          .orderBy(asc(hotels.position), asc(hotels.createdAt)),
+      ),
+      withRetry(() =>
+        db
+          .select()
+          .from(placeItems)
+          .where(eq(placeItems.tripId, tripId))
+          .orderBy(asc(placeItems.createdAt)),
+      ),
+      withRetry(() =>
+        db
+          .select()
+          .from(notes)
+          .where(eq(notes.tripId, tripId))
+          .orderBy(asc(notes.position), asc(notes.createdAt)),
+      ),
+      withRetry(() =>
+        db
+          .select()
+          .from(lists)
+          .where(eq(lists.tripId, tripId))
+          .orderBy(asc(lists.position)),
+      ),
+      withRetry(() =>
+        db
+          .select()
+          .from(tripMembers)
+          .where(eq(tripMembers.tripId, tripId))
+          .orderBy(asc(tripMembers.position), asc(tripMembers.createdAt)),
+      ),
+      withRetry(() =>
+        db
+          .select()
+          .from(expenses)
+          .where(eq(expenses.tripId, tripId))
+          .orderBy(asc(expenses.position), asc(expenses.createdAt)),
+      ),
     ]);
 
   if (!row) {
@@ -159,11 +222,32 @@ export default async function TripDetailPage({
   let listRows = fetchedListRows;
   if (listRows.length === 0) {
     await ensureTripPlaceLists(tripId);
-    listRows = await db
-      .select()
-      .from(lists)
-      .where(eq(lists.tripId, tripId))
-      .orderBy(asc(lists.position));
+    listRows = await withRetry(() =>
+      db
+        .select()
+        .from(lists)
+        .where(eq(lists.tripId, tripId))
+        .orderBy(asc(lists.position)),
+    );
+  }
+
+  /*
+   * 保证每个行程都有「我」那一行（兼容改造前建的行程）。
+   * 判断条件**不是"成员为空"** —— 老行程往往已经有被邀请的伙伴，缺的恰恰是
+   * 「我」自己（expenses.paid_by 是 notNull 外键，没有成员就记不了费用），
+   * 所以按哨兵邮箱找。和上面那个一样：真缺时才走确保那条路。
+   * 插完要重读一遍，因为腾 position 0 时把别人的 position 也改了，手里这份是旧的。
+   */
+  let memberRows = fetchedMemberRows;
+  if (!memberRows.some((m) => m.email === SELF_MEMBER_EMAIL)) {
+    await ensureTripSelfMember(tripId);
+    memberRows = await withRetry(() =>
+      db
+        .select()
+        .from(tripMembers)
+        .where(eq(tripMembers.tripId, tripId))
+        .orderBy(asc(tripMembers.position), asc(tripMembers.createdAt)),
+    );
   }
 
   // 已查过的路线（时长/距离/折线）跟着首屏一起下来，前端就不必再问一次高德
@@ -176,6 +260,8 @@ export default async function TripDetailPage({
       trip={trip}
       flights={flightRows as Flight[]}
       hotels={hotelRows as Hotel[]}
+      tripMembers={memberRows as TripMember[]}
+      expenses={expenseRows as Expense[]}
       placeItems={itemRows as PlaceItem[]}
       placeLists={listRows as List[]}
       notes={noteRows as Note[]}

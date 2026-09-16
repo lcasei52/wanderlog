@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { PlaceList, PlaceItemInput } from "@/types/place";
 import { usePlaces } from "@/context/places-context";
+import { useHistory } from "@/context/history-context";
 import { buildGroupKey } from "@/lib/place-groups";
 import { canDeletePlace, canDragPlace } from "@/lib/place-kinds";
 import ListShell from "./ListShell";
@@ -25,6 +26,7 @@ export default function PlacesList({ list }: { list: PlaceList }) {
     deletePlaceList,
     reorderItems,
   } = usePlaces();
+  const { batch } = useHistory();
   const [expanded, setExpanded] = useState(true);
 
   const items = listItems(list.id);
@@ -51,12 +53,17 @@ export default function PlacesList({ list }: { list: PlaceList }) {
    * 卡片间隔里的添加：先按常规追加（新行 position = max+1），
    * 再把整段顺序重写成"原顺序 + 新实例插在第 index 位"——
    * reorderItems 会把该容器内的 position 重排为 0..n-1，正好落在这个间隔里。
+   *
+   * 这两步在用户眼里是**一个**动作（"在这儿插一个地点"），所以包进 batch：
+   * 否则撤销栈会记两份快照，按一下只退回重排前、得按两下才把地点收走。
    */
   const handleGapAdd = async (index: number, result: PlaceSearchResult) => {
-    const row = await addItem(toInput(result), container);
-    if (!row) return;
-    const ids = items.map((it) => it.id);
-    await reorderItems([...ids.slice(0, index), row.id, ...ids.slice(index)]);
+    await batch(async () => {
+      const row = await addItem(toInput(result), container);
+      if (!row) return;
+      const ids = items.map((it) => it.id);
+      await reorderItems([...ids.slice(0, index), row.id, ...ids.slice(index)]);
+    });
   };
 
   return (

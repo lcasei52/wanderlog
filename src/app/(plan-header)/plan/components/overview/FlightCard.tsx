@@ -1,19 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, ChevronDown, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency, sameFields } from "@/lib/utils";
 import { formatDateStringDisplay } from "@/lib/date-helpers";
 import { useBookings } from "@/context/bookings-context";
+import { useExpenses } from "@/context/expenses-context";
 import { usePlaces } from "@/context/places-context";
+import { inferFromFlight } from "@/lib/expense-helpers";
+import { Label } from "@/components/ui/label";
 import FlightFormFields, {
   toDraft,
   validateDraft,
   type FlightDraft,
 } from "./FlightFormFields";
+import LinkedExpenseButton from "./LinkedExpenseButton";
 import type { Flight } from "@/db/schema";
 
 /**
@@ -27,6 +31,15 @@ import type { Flight } from "@/db/schema";
 export default function FlightCard({ flight }: { flight: Flight }) {
   const { updateFlight } = useBookings();
   const { dateRange } = usePlaces();
+  const { expenses } = useExpenses();
+
+  /** 费用那一格的名称/类别（点「添加费用」时预填），金额本身不在这里 */
+  const expenseSeed = inferFromFlight(flight);
+
+  /** 收起态要显示的那个金额。查两遍是故意的：展开后同一个数在费用格里还有一个。 */
+  const linkedExpense = expenses.find(
+    (e) => e.linkedItemType === "flight" && e.linkedItemId === flight.id,
+  );
 
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -37,6 +50,21 @@ export default function FlightCard({ flight }: { flight: Flight }) {
     dateRange?.from && dateRange?.to
       ? { before: dateRange.from, after: dateRange.to }
       : undefined;
+
+  /*
+   * 源头那行的**字段**变了就把草稿拉回来 —— 撤销会把它换成快照里那个对象，不跟着走
+   * 的话展开的卡片显示的是撤销前的值，点保存还会把撤掉的值写回库。
+   *
+   * 比的是字段不是对象身份：拖动排序会为了写回 position 把整列的行对象重建一遍，
+   * 那种"换了对象但字段没变"不该把用户还没保存的输入擦掉。（收起卡片不重置 draft
+   * 那条也不受影响 —— 收起改的是 expanded，`flight` 压根没动。）
+   */
+  useEffect(() => {
+    setDraft((prev) => {
+      const next = toDraft(flight);
+      return sameFields(prev, next) ? prev : next;
+    });
+  }, [flight]);
 
   const set = <K extends keyof FlightDraft>(key: K, value: FlightDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -71,6 +99,14 @@ export default function FlightCard({ flight }: { flight: Flight }) {
       setDraft(toDraft(row)); // 以入库后的整行为准回填
       setExpanded(false);
       toast.success("航班已更新");
+    } catch (err) {
+      /*
+       * service action 抛错必须接住。以前这里只有 finally，于是任何一次异常
+       * （Neon 那趟连接超时是常态，见 db/client.ts）都表现成"按钮没反应"：
+       * 不弹提示、卡片不收起，只有控制台里一条报错。
+       */
+      console.error("保存航班失败:", err);
+      toast.error("保存失败，请重试");
     } finally {
       setSaving(false);
     }
@@ -87,7 +123,8 @@ export default function FlightCard({ flight }: { flight: Flight }) {
       {/*
         头部 = 折叠态摘要，整块可点开/收起。
         展开的表单是它的**兄弟节点**而不是子节点 —— role="button" 里不能套输入框。
-        收起时不重置 draft：手滑点掉卡片不该丢输入，只有保存/取消才重置。
+        收起时不重置 draft：手滑点掉卡片不该丢输入。重置只有三个来源：保存、取消、
+        以及上面那个 effect（源头那行真的变了）。
       */}
       <div
         role="button"
@@ -135,9 +172,21 @@ export default function FlightCard({ flight }: { flight: Flight }) {
           {formatDateStringDisplay(flight.date)}
           {times && <> • {times}</>}
         </div>
-        <div className="text-xs text-gray-500 mt-1 uppercase">
-          {/* 航司可空（老数据和手动添加的都可能没有），别多冒出一个分隔点 */}
-          {[flight.airline, flight.flightNumber].filter(Boolean).join(" · ")}
+        <div className="mt-1 flex items-center gap-2">
+          <span className="text-xs text-gray-500 uppercase">
+            {/* 航司可空（老数据和手动添加的都可能没有），别多冒出一个分隔点 */}
+            {[flight.airline, flight.flightNumber].filter(Boolean).join(" · ")}
+          </span>
+          {/*
+            收起态也看得到这笔航班的费用。
+            做成纯 span 不是按钮：这一整块已经是 role="button"（点了展开），里面
+            再套一个可点元素会变成"点一下既展开又弹窗"。要改金额就展开点那个蓝框。
+          */}
+          {linkedExpense && (
+            <span className="ml-auto shrink-0 rounded-md bg-blue-50 px-1.5 py-0.5 text-xs font-semibold text-blue-600">
+              {formatCurrency(linkedExpense.amount, linkedExpense.currency)}
+            </span>
+          )}
         </div>
       </div>
 
@@ -150,6 +199,24 @@ export default function FlightCard({ flight }: { flight: Flight }) {
             fallbackMonth={dateRange?.from}
           />
 
+          {/*
+            费用：金额只有费用表一个来源，这一格只是它的视图 —— 金额在别处
+            （预算里）改过，这里立刻就是新数。以前它抄在表单 draft 里，
+            预算是新数、卡片还是旧的，再点一次保存还会把旧值写回去。
+          */}
+          <div className="space-y-1">
+            <Label className="text-xs font-normal text-gray-500">费用</Label>
+            <LinkedExpenseButton
+              linkedItemType="flight"
+              linkedItemId={flight.id}
+              // 名称/类别按航班推断（如「北京-上海 航班」/ 航班），日期取出发日
+              prefill={{ ...expenseSeed, date: flight.date }}
+            />
+            <p className="text-xs text-gray-400">
+              这笔账记在预算里，点开能改金额、币种、付款人和分摊；还没有就是「添加费用」。
+            </p>
+          </div>
+
           <p className="text-xs text-gray-400">
             出发/到达机场在当天列表里那两条地点不会跟着改，需要的话自己到行程里调整。
           </p>
@@ -161,7 +228,8 @@ export default function FlightCard({ flight }: { flight: Flight }) {
               size="sm"
               disabled={saving}
               onClick={() => {
-                setDraft(toDraft(flight)); // 放弃这次改动
+                // 放弃这次改动，回到库里那份
+                setDraft(toDraft(flight));
                 setExpanded(false);
               }}
             >

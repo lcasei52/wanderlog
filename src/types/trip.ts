@@ -14,4 +14,6 @@ export interface TripSummary {
   };
   coverImageUrl?: string | null; // 网络图片 URL
   coverImageData?: string | null; // 本地图片 base64
+  budget?: number | null; // 行程总预算
+  budgetCurrency?: string | null; // 预算币种
 }

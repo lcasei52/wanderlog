@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { parse, format } from "date-fns";
 import type { DateRange } from "react-day-picker";
@@ -9,11 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency, sameFields } from "@/lib/utils";
 import { formatDateStringDisplay } from "@/lib/date-helpers";
 import { useBookings } from "@/context/bookings-context";
 import { usePlaces } from "@/context/places-context";
+import { useExpenses } from "@/context/expenses-context";
 import DateRangeField from "./DateRangeField";
+import LinkedExpenseButton from "./LinkedExpenseButton";
 import type { Hotel } from "@/db/schema";
 
 /**
@@ -28,11 +30,6 @@ interface HotelDraft {
   address: string;
   checkIn: string; // "yyyy-MM-dd"
   checkOut: string; // "yyyy-MM-dd"
-  /**
-   * 费用只活在这个 draft 里 —— hotels 表还没有 cost 列，保存时不写，
-   * 刷新就没了。等费用真正要做时再补列 + 接进 patch。
-   */
-  cost: string;
 }
 
 function toDraft(h: Hotel): HotelDraft {
@@ -41,7 +38,6 @@ function toDraft(h: Hotel): HotelDraft {
     address: h.address ?? "",
     checkIn: h.checkIn,
     checkOut: h.checkOut,
-    cost: "",
   };
 }
 
@@ -59,6 +55,12 @@ function toRange(checkIn: string, checkOut: string): DateRange | undefined {
 export default function HotelCard({ hotel }: { hotel: Hotel }) {
   const { updateHotel } = useBookings();
   const { dateRange } = usePlaces();
+  const { expenses } = useExpenses();
+
+  /** 收起态要显示的那个金额。查两遍是故意的：展开后同一个数在费用格里还有一个。 */
+  const linkedExpense = expenses.find(
+    (e) => e.linkedItemType === "hotel" && e.linkedItemId === hotel.id,
+  );
 
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -68,6 +70,21 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
     dateRange?.from && dateRange?.to
       ? { before: dateRange.from, after: dateRange.to }
       : undefined;
+
+  /*
+   * 源头那行的**字段**变了就把草稿拉回来 —— 撤销会把它换成快照里那个对象，不跟着走
+   * 的话展开的卡片显示的是撤销前的值，点保存还会把撤掉的值写回库。
+   *
+   * 比的是字段不是对象身份：拖动排序会为了写回 position 把整列的行对象重建一遍，
+   * 那种"换了对象但字段没变"不该把用户还没保存的输入擦掉。（收起卡片不重置 draft
+   * 那条也不受影响 —— 收起改的是 expanded，`hotel` 压根没动。）
+   */
+  useEffect(() => {
+    setDraft((prev) => {
+      const next = toDraft(hotel);
+      return sameFields(prev, next) ? prev : next;
+    });
+  }, [hotel]);
 
   const set = <K extends keyof HotelDraft>(key: K, value: HotelDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -110,6 +127,14 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
       setDraft(toDraft(row)); // 以入库后的整行为准回填
       setExpanded(false);
       toast.success("住宿已更新");
+    } catch (err) {
+      /*
+       * service action 抛错必须接住。以前这里只有 finally，于是任何一次异常
+       * （Neon 那趟连接超时是常态，见 db/client.ts）都表现成"按钮没反应"：
+       * 不弹提示、卡片不收起，只有控制台里一条报错。
+       */
+      console.error("保存住宿失败:", err);
+      toast.error("保存失败，请重试");
     } finally {
       setSaving(false);
     }
@@ -120,7 +145,8 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
       {/*
         头部 = 折叠态摘要，整块可点开/收起。
         展开的表单是它的**兄弟节点**而不是子节点 —— role="button" 里不能套输入框。
-        收起时不重置 draft：手滑点掉卡片不该丢输入，只有保存/取消才重置。
+        收起时不重置 draft：手滑点掉卡片不该丢输入。重置只有三个来源：保存、取消、
+        以及上面那个 effect（源头那行真的变了）。
       */}
       <div
         role="button"
@@ -152,9 +178,21 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
           />
         </div>
 
-        <div className="text-sm text-gray-700 mt-3">
-          {formatDateStringDisplay(hotel.checkIn)} —{" "}
-          {formatDateStringDisplay(hotel.checkOut)}
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-sm text-gray-700">
+            {formatDateStringDisplay(hotel.checkIn)} —{" "}
+            {formatDateStringDisplay(hotel.checkOut)}
+          </span>
+          {/*
+            收起态也看得到这笔住宿的费用。
+            做成纯 span 不是按钮：这一整块已经是 role="button"（点了展开），里面
+            再套一个可点元素会变成"点一下既展开又弹窗"。要改金额就展开点那个蓝框。
+          */}
+          {linkedExpense && (
+            <span className="ml-auto shrink-0 rounded-md bg-blue-50 px-1.5 py-0.5 text-xs font-semibold text-blue-600">
+              {formatCurrency(linkedExpense.amount, linkedExpense.currency)}
+            </span>
+          )}
         </div>
       </div>
 
@@ -191,18 +229,21 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
             />
           </div>
 
+          {/*
+            费用：金额只有费用表一个来源，这一格只是它的视图 —— 金额在别处
+            （预算里）改过，这里立刻就是新数。以前它抄在表单 draft 里，
+            预算是新数、卡片还是旧的，再点一次保存还会把旧值写回去。
+          */}
           <div className="space-y-1">
             <Label className="text-xs font-normal text-gray-500">费用</Label>
-            <Input
-              value={draft.cost}
-              onChange={(e) => set("cost", e.target.value)}
-              placeholder="¥ 1200"
-              inputMode="decimal"
-              className="h-8"
+            <LinkedExpenseButton
+              linkedItemType="hotel"
+              linkedItemId={hotel.id}
+              // 名称用酒店名，类别「住宿」，日期取入住日
+              prefill={{ name: hotel.name, category: "住宿", date: hotel.checkIn }}
             />
-            {/* 别让人以为填了就存下了 —— 这一格目前是占位 */}
             <p className="text-xs text-gray-400">
-              费用暂时只留在这一格里，不进数据库，保存后刷新就没了。
+              这笔账记在预算里，点开能改金额、币种、付款人和分摊；还没有就是「添加费用」。
             </p>
           </div>
 
@@ -217,7 +258,8 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
               size="sm"
               disabled={saving}
               onClick={() => {
-                setDraft(toDraft(hotel)); // 放弃这次改动
+                // 放弃这次改动，回到库里那份
+                setDraft(toDraft(hotel));
                 setExpanded(false);
               }}
             >

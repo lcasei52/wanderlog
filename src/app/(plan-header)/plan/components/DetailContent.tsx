@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { toast } from "sonner";
-import { ImagePlus, Calendar as CalendarIcon } from "lucide-react";
+import { ImagePlus, Calendar as CalendarIcon, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -15,13 +15,17 @@ import {
 import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import type { TripSummary } from "@/types/trip";
-import type { Note } from "@/db/schema";
 import { usePlaces } from "@/context/places-context";
+import { useExpenses } from "@/context/expenses-context";
 import { updateTripCover } from "@/actions/trip-cover";
 import ImagePickerDialog from "@/components/ImagePickerDialog";
 import TripHeaderCard from "./TripHeaderCard";
 import BookingCard from "./overview/BookingCard";
+import BudgetSummaryCard from "./overview/BudgetSummaryCard";
 import BudgetCard from "./overview/BudgetCard";
+import ExpensesList from "./overview/ExpensesList";
+import AddExpenseDialog from "./overview/AddExpenseDialog";
+import EditExpenseDialog from "./overview/EditExpenseDialog";
 import NotesList from "./overview/NotesList";
 import FlightsList from "./overview/FlightsList";
 import HotelsList from "./overview/HotelsList";
@@ -31,15 +35,12 @@ import DayCard from "./itinerary/DayCard";
 interface DetailContentProps {
   /** 来自数据库的行程快照 */
   trip?: TripSummary;
-  /** 该行程的笔记 */
-  notes: Note[];
   /** 滚动位置变化时上报：当前所在的大类 id（overview/itinerary/budget）与小标题锚点 id */
   onActiveChange?: (active: { section: string; subId: string | null }) => void;
 }
 
 export default function DetailContent({
   trip,
-  notes,
   onActiveChange,
 }: DetailContentProps) {
   const router = useRouter();
@@ -51,8 +52,27 @@ export default function DetailContent({
   // 概览 / 行程 / 日期统一由 PlacesProvider + BookingsProvider 供给
   const { items, placeLists, days, dateRange, setDateRange, addPlaceList } =
     usePlaces();
+  const { getExpense } = useExpenses();
 
   const [showImagePicker, setShowImagePicker] = useState(false);
+  const [showAddExpense, setShowAddExpense] = useState(false);
+
+  /*
+   * 正在编辑的那笔费用（「＋ 添加费用」里挑到已记账的项目时会切到它）；null = 关着。
+   * 存 id 不存那一行的对象，理由和 ExpensesList 里那处一样：撤销会把费用表换成快照
+   * 里那份对象，攥着旧对象的话弹窗永远看不到源头变了，点保存就把撤掉的值写回库。
+   */
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const editingExpense = editingExpenseId
+    ? (getExpense(editingExpenseId) ?? null)
+    : null;
+
+  // 撤销可能正好把这笔费用收走 —— 那就等于关掉弹窗，别留着 id 等它被复原时自己弹开
+  useEffect(() => {
+    if (editingExpenseId && !getExpense(editingExpenseId)) {
+      setEditingExpenseId(null);
+    }
+  }, [editingExpenseId, getExpense]);
 
   /**
    * scrollspy：取滚动容器内一条"参考线"（顶部往下 140px），
@@ -210,13 +230,14 @@ export default function DetailContent({
               <BookingCard />
             </div>
             <div className="col-span-1">
-              <BudgetCard />
+              {/* 摘要卡：详细的那张在「预算」大标题下，这里点「查看详情」滚过去 */}
+              <BudgetSummaryCard budgetCurrency={trip?.budgetCurrency} />
             </div>
           </div>
 
           {/* 列表区：Notes / Flights / Hotels / 各地点列表 */}
           <div className="bg-white rounded-lg shadow-sm overflow-hidden divide-y divide-gray-100">
-            <NotesList tripId={trip?.id ?? ""} notes={notes} />
+            <NotesList />
             <FlightsList />
             <HotelsList />
             {placeLists.map((list) => (
@@ -278,29 +299,50 @@ export default function DetailContent({
 
         {/* 预算 */}
         <section id="budget" className="scroll-mt-4">
-          <h2 className="text-2xl font-bold mb-4 text-gray-900">预算</h2>
-          <div className="bg-white rounded-lg p-6 shadow-sm">
-            <div className="mb-6">
-              <p className="text-sm text-gray-500 mb-2">总预算</p>
-              <p className="text-3xl font-bold text-gray-900">¥ 0</p>
-            </div>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">已花费</span>
-                <span className="text-base font-semibold text-gray-900">
-                  ¥ 0
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">剩余</span>
-                <span className="text-base font-semibold text-green-600">
-                  ¥ 0
-                </span>
-              </div>
+          {/* 「预算」标题与「＋ 添加费用」同一行，按钮靠最右 */}
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <h2 className="text-2xl font-bold text-gray-900">预算</h2>
+            <Button
+              className="rounded-full bg-orange-500 px-5 hover:bg-orange-600"
+              onClick={() => setShowAddExpense(true)}
+            >
+              <Plus className="size-4" />
+              添加费用
+            </Button>
+          </div>
+
+          <div className="space-y-4">
+            {/* 详细预算卡：当前总额 + 进度条 + 团队情况 + 右侧三个入口 */}
+            <BudgetCard
+              tripId={trip?.id ?? ""}
+              budget={trip?.budget}
+              budgetCurrency={trip?.budgetCurrency}
+            />
+
+            {/* 费用明细 */}
+            <div className="bg-white rounded-lg p-6 shadow-sm">
+              <ExpensesList />
             </div>
           </div>
         </section>
       </div>
+
+      {/* 添加费用弹窗（「＋ 添加费用」按钮打开） */}
+      <AddExpenseDialog
+        open={showAddExpense}
+        onOpenChange={setShowAddExpense}
+        /*
+         * 在「选择项目」里挑到一个已经记过账的项目（比如某天的某个地点）时，
+         * 不是"再记一笔"而是"改那一笔"—— 换成费用列表用的那个编辑框。
+         */
+        onEditExisting={(expense) => setEditingExpenseId(expense.id)}
+      />
+
+      {/* 编辑费用：从上面那个框里挑到已记账的项目时接手 */}
+      <EditExpenseDialog
+        expense={editingExpense}
+        onOpenChange={(open) => !open && setEditingExpenseId(null)}
+      />
 
       {/* 图片选择器弹窗 */}
       <ImagePickerDialog

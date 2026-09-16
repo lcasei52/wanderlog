@@ -21,13 +21,16 @@ import type { PlaceSearchResult } from "@/hooks/usePlaceSearch";
 import type { PlaceItemInput, PlacePoi } from "@/types/place";
 import { useBookings } from "@/context/bookings-context";
 import { usePlaces } from "@/context/places-context";
+import { useHistory } from "@/context/history-context";
 import ListShell from "./ListShell";
 
 /** 概览区的 Hotels 列表：已入库住宿的卡片 + 「添加一个住宿」弹窗 */
 export default function HotelsList() {
   const { hotels, deleteHotel, addHotel, expanded, setExpanded, reorderHotels } =
     useBookings();
-  const { dateRange, days, addItem, removeItemsBySource } = usePlaces();
+  const { dateRange, days, addItem } = usePlaces();
+  // 加住宿要挂出一串酒店地点卡（跨 N 天是 2N-2 张），整段包进 batch 才对得上"一个手势"
+  const { batch } = useHistory();
 
   const [showHotelDialog, setShowHotelDialog] = useState(false);
   const [hotelForm, setHotelForm] = useState<{
@@ -50,12 +53,15 @@ export default function HotelsList() {
    * 入住→退房每天各挂一份酒店地点实例：
    * 入住日放当天末尾（晚上回酒店）、退房日放当天开头（早上退房走）、
    * 中间每天首尾各放一份（早上在酒店 / 晚上回酒店）。
+   *
+   * 返回的 promise 要 await 住：这一串地点实例是"加住宿"这个手势的一部分，
+   * 撤销栈得在整个手势结束前把它们记全（见 history-context 的 batch）。
    */
-  const addHotelItems = (
+  const addHotelItems = async (
     created: Awaited<ReturnType<typeof addHotel>>,
     poi: PlacePoi,
     range: DateRange,
-  ) => {
+  ): Promise<void> => {
     if (
       !created ||
       created.lng == null ||
@@ -77,9 +83,13 @@ export default function HotelsList() {
       sourceKind: "hotel", // 删除该住宿时级联删除这些自动生成的酒店地点
       sourceId: created.id,
     };
+    // 收齐所有 promise 再一起等：并发送出（串行是延迟相加），但都回来才算这次手势做完
+    const pending: Promise<unknown>[] = [];
     const placeAt = (dayDate: string, atStart: boolean) => {
       if (!tripDates.has(dayDate)) return; // 该日不在行程内 → 不加
-      addItem(input, { kind: "day", dayDate }, { select: false, atStart });
+      pending.push(
+        addItem(input, { kind: "day", dayDate }, { select: false, atStart })
+      );
     };
     eachDayOfInterval({ start: range.from, end: range.to }).forEach((d) => {
       const iso = format(d, "yyyy-MM-dd");
@@ -97,6 +107,7 @@ export default function HotelsList() {
         placeAt(iso, false);
       }
     });
+    await Promise.all(pending);
   };
 
   const handleAddHotel = async () => {
@@ -109,16 +120,26 @@ export default function HotelsList() {
 
     setHotelAdding(true);
     try {
-      const created = await addHotel({
-        name: poi.name,
-        address: poi.address ?? null,
-        lng: poi.location?.lng ?? null,
-        lat: poi.location?.lat ?? null,
-        checkIn: checkInIso,
-        checkOut: checkOutIso,
-        checkInDate: checkInIso,
+      // 整段是一个手势：入库住宿 + 每一天挂出的酒店地点卡。batch 让撤销栈只记第一份
+      // 快照（= 动手之前），按一下撤销这一串一起退回去。
+      const ok = await batch(async () => {
+        const created = await addHotel({
+          name: poi.name,
+          address: poi.address ?? null,
+          lng: poi.location?.lng ?? null,
+          lat: poi.location?.lat ?? null,
+          checkIn: checkInIso,
+          checkOut: checkOutIso,
+          checkInDate: checkInIso,
+        });
+        if (!created) return false;
+        await addHotelItems(created, poi, range);
+        return true;
       });
-      addHotelItems(created, poi, range);
+      if (!ok) {
+        toast.error("添加失败，请重试");
+        return;
+      }
       toast.success("住宿已添加");
       setShowHotelDialog(false);
       setHotelForm({ poi: null, dateRange: undefined });
@@ -132,8 +153,8 @@ export default function HotelsList() {
 
   const handleDeleteHotel = async (id: string) => {
     try {
+      // 酒店地点与费用的清理收在 deleteHotel 里了（它才知道这个动作的全部后果）
       await deleteHotel(id);
-      removeItemsBySource("hotel", id); // 同步清掉该住宿自动生成的每日酒店地点
       toast.success("住宿已删除");
     } catch {
       toast.error("删除失败，请重试");

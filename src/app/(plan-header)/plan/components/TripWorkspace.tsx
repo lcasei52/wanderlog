@@ -2,11 +2,15 @@
 
 import { useState } from "react";
 import type { TripSummary } from "@/types/trip";
-import type { Flight, Hotel, List, PlaceItem, Note } from "@/db/schema";
+import type { Flight, Hotel, List, PlaceItem, Note, TripMember, Expense } from "@/db/schema";
 import type { CachedRoutePlan } from "@/lib/place-route";
+import { TripHistoryProvider } from "@/context/history-context";
+import { NotesProvider } from "@/context/notes-context";
 import { PlacesProvider } from "@/context/places-context";
 import { BookingsProvider } from "@/context/bookings-context";
 import { RoutesProvider } from "@/context/routes-context";
+import { MembersProvider } from "@/context/members-context";
+import { ExpensesProvider } from "@/context/expenses-context";
 import SimpleSidebar from "./SimpleSidebar";
 import DetailContent from "./DetailContent";
 import MapView from "./MapView";
@@ -20,6 +24,9 @@ interface TripWorkspaceProps {
   /** 该行程已入库的航班 / 住宿（BookingsProvider 初值） */
   flights: Flight[];
   hotels: Hotel[];
+  /** 该行程的成员和费用（MembersProvider / ExpensesProvider 初值） */
+  tripMembers: TripMember[];
+  expenses: Expense[];
   /** 该行程已入库的地点实例 / 地点列表（PlacesProvider 初值） */
   placeItems: PlaceItem[];
   placeLists: List[];
@@ -35,13 +42,22 @@ interface TripWorkspaceProps {
 
 /**
  * 详情页三列布局的 client 边界：把 SimpleSidebar / DetailContent / MapView
- * 都包进 PlacesProvider + BookingsProvider，让地点实例/成员/选中态与
- * 航班/住宿增删、展开态共享。地图列用 relative 壳包住 MapView 和浮在上面的 PlaceDetailCard。
+ * 都包进 Provider，让地点实例/选中态、航班/住宿增删、成员与费用共享。
+ * 地图列用 relative 壳包住 MapView 和浮在上面的 PlaceDetailCard。
+ *
+ * ★ TripHistoryProvider 必须在**所有**功能 provider 的最外面：撤销栈要能同时够到
+ * 地点/费用/航班住宿/笔记，各功能把自己那一片注册进去（见 history-context 顶部契约）。
+ * 往它里面、各功能外面塞新 provider 都行，但别把任何**要进快照**的功能挪到它外面去。
+ *
+ * Members/Expenses 放在最外层：预算卡与费用列表要读成员做分摊结算，
+ * 而降级路径上它们不依赖地点/航班，包在外面谁都能取到。
  */
 export default function TripWorkspace({
   trip,
   flights,
   hotels,
+  tripMembers,
+  expenses,
   placeItems,
   placeLists,
   notes,
@@ -59,55 +75,65 @@ export default function TripWorkspace({
   const [isAiOpen, setIsAiOpen] = useState(false);
 
   return (
-    <PlacesProvider
-      tripId={trip.id}
-      tripDates={{ startDate: trip.startDate, endDate: trip.endDate }}
-      seeds={{ items: placeItems, placeLists }}
-    >
-      <UndoRedoButtons />
-      <BookingsProvider tripId={trip.id} flights={flights} hotels={hotels}>
-        {/* 路线缓存/隐藏态/地图画线开关由行程列（间隔那行）与地图列（那些线）共享。
-            城市只给公交查询用（高德的公交必须有城市），拿行程目的地顶上；
-            库里已有的路线（routePlans）作为初值灌进去，重开行程就不用再问高德了。 */}
-        <RoutesProvider
-          tripId={trip.id}
-          initialPlans={routePlans}
-          city={trip.destination?.name ?? null}
-        >
-          <div className="flex flex-1 overflow-hidden">
-            {/* 左侧：header + sidebar + detail */}
-            <div className="flex flex-col h-full">
-              <PlanHeader />
-              <div className="flex flex-1 overflow-hidden">
-                <SimpleSidebar
-                  trip={trip}
-                  activeSection={active.section}
-                  activeSubId={active.subId}
-                  onAiClick={() => setIsAiOpen(true)}
-                />
-                <DetailContent trip={trip} notes={notes} onActiveChange={setActive} />
-              </div>
-            </div>
+    <TripHistoryProvider tripId={trip.id}>
+      {/* 笔记谁也不依赖，放在最靠里那层；只要在 TripHistoryProvider 里面就能进快照 */}
+      <NotesProvider tripId={trip.id} notes={notes}>
+        <MembersProvider tripId={trip.id} members={tripMembers}>
+          <ExpensesProvider tripId={trip.id} expenses={expenses}>
+            <PlacesProvider
+              tripId={trip.id}
+              tripDates={{ startDate: trip.startDate, endDate: trip.endDate }}
+              seeds={{ items: placeItems, placeLists }}
+            >
+              <UndoRedoButtons />
+              <BookingsProvider tripId={trip.id} flights={flights} hotels={hotels}>
+                {/* 路线缓存/隐藏态/地图画线开关由行程列（间隔那行）与地图列（那些线）共享。
+                    城市只给公交查询用（高德的公交必须有城市），拿行程目的地顶上；
+                    库里已有的路线（routePlans）作为初值灌进去，重开行程就不用再问高德了。 */}
+                <RoutesProvider
+                  tripId={trip.id}
+                  initialPlans={routePlans}
+                  city={trip.destination?.name ?? null}
+                >
+                  <div className="flex flex-1 overflow-hidden">
+                    {/* 左侧：header + sidebar + detail */}
+                    <div className="flex flex-col h-full">
+                      <PlanHeader />
+                      <div className="flex flex-1 overflow-hidden">
+                        <SimpleSidebar
+                          trip={trip}
+                          activeSection={active.section}
+                          activeSubId={active.subId}
+                          onAiClick={() => setIsAiOpen(true)}
+                        />
+                        {/* notes 不用再往下传：NotesList 直接从 NotesProvider 取 */}
+                        <DetailContent trip={trip} onActiveChange={setActive} />
+                      </div>
+                    </div>
 
-            {/* 右侧：地图占满全高 */}
-            <div className="relative flex-1 min-w-0">
-              <MapView
-                destinationCenter={destinationCenter}
-                hiddenLayers={hiddenLayers}
-              />
-            </div>
-          </div>
+                    {/* 右侧：地图占满全高 */}
+                    <div className="relative flex-1 min-w-0">
+                      <MapView
+                        destinationCenter={destinationCenter}
+                        hiddenLayers={hiddenLayers}
+                      />
+                    </div>
+                  </div>
 
-          {/* AI 助手侧边栏。tripId 用来读写对话记录；destination 只喂给 AI 当上下文。 */}
-          <AiAssistant
-            isOpen={isAiOpen}
-            onClose={() => setIsAiOpen(false)}
-            tripId={trip.id}
-            tripName={trip.name}
-            destination={trip.destination?.name}
-          />
-        </RoutesProvider>
-      </BookingsProvider>
-    </PlacesProvider>
+                  {/* AI 助手侧边栏。tripId 用来读写对话记录；destination 只喂给 AI 当上下文。 */}
+                  <AiAssistant
+                    isOpen={isAiOpen}
+                    onClose={() => setIsAiOpen(false)}
+                    tripId={trip.id}
+                    tripName={trip.name}
+                    destination={trip.destination?.name}
+                  />
+                </RoutesProvider>
+              </BookingsProvider>
+            </PlacesProvider>
+          </ExpensesProvider>
+        </MembersProvider>
+      </NotesProvider>
+    </TripHistoryProvider>
   );
 }

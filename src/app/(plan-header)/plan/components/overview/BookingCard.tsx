@@ -49,7 +49,8 @@ export default function BookingCard() {
   ];
 
   return (
-    <div className="bg-white rounded-lg p-6 shadow-sm">
+    // h-full：与右侧预算摘要卡同一行，撑满 grid 给的行高，两张卡底边框才齐
+    <div className="bg-white rounded-lg p-6 shadow-sm h-full">
       <h3 className="text-lg font-semibold text-gray-900 mb-6">预订和附件</h3>
       <div className="flex items-center justify-between">
         {bookingItems.map((item) => (

@@ -40,6 +40,7 @@ import { Textarea } from "@/components/ui/textarea";
 import ImagePickerDialog from "@/components/ImagePickerDialog";
 import type { PlaceContainer, PlaceItem } from "@/types/place";
 import { usePlaces } from "@/context/places-context";
+import { useHistory } from "@/context/history-context";
 import { usePlaceFacts, type PlaceFacts } from "@/hooks/usePlaceFacts";
 import { callAi, readAiConfig } from "@/lib/ai-providers";
 import { getColorByListId } from "@/lib/colors";
@@ -116,6 +117,7 @@ function DetailBody({
     deleteItem,
     updateItem,
   } = usePlaces();
+  const { batch, restoreNonce } = useHistory();
 
   // 大图 / 换图弹窗 / 简介编辑
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -139,12 +141,22 @@ function DetailBody({
   }, []);
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  // 服务器值追上乐观值了就撤掉它；没追上（比如写库失败）就继续显示用户刚写的
+  /*
+   * 乐观值只活到"源头那行开口"为止，判据有两条：
+   *   1. 服务器那份绕回来了（cur.description 追上了我们写进去的值）—— 让位给它；
+   *   2. 这中间发生过撤销/复原 —— 用户要看的是快照里那个值，不是我们手上这个。
+   * 少了第 2 条，撤销把简介改成别的值时乐观值会一直挂着盖住快照的值（看着就像
+   * "撤销没生效"，而再点一次保存还会把它写回库）。
+   */
+  const restoreNonceRef = useRef(restoreNonce);
   useEffect(() => {
-    if (optimisticDesc !== undefined && cur.description === optimisticDesc) {
+    const restored = restoreNonceRef.current !== restoreNonce;
+    restoreNonceRef.current = restoreNonce;
+    if (optimisticDesc === undefined) return;
+    if (restored || cur.description === optimisticDesc) {
       setOptimisticDesc(undefined);
     }
-  }, [cur.description, optimisticDesc]);
+  }, [cur.description, optimisticDesc, restoreNonce]);
 
   const shownDesc =
     optimisticDesc !== undefined ? optimisticDesc : cur.description;
@@ -184,34 +196,41 @@ function DetailBody({
 
   const presentTitles = layerOptions.filter((o) => o.present).map((o) => o.label);
 
+  /**
+   * 勾选/取消勾选一个图层。勾选是复制一份、取消是删掉该图层下的**全部**同 POI 实例
+   * （可能是好几份），在用户眼里都只是"点了一下这个勾"，所以整段包进 batch：
+   * 一次撤销即回到点击之前，而不是按 N 下才把那一批副本逐个收回去。
+   */
   const applyLayer = async (container: PlaceContainer, checked: boolean) => {
-    if (checked) {
-      // 勾选新图层 = 复制一份实例过去（含笔记/时间/附件/已访问，同 #4）
-      const copied = await copyItemTo(cur.id, container);
-      if (copied) {
-        toast.success(`已复制到「${containerTitle(container)}」`);
+    await batch(async () => {
+      if (checked) {
+        // 勾选新图层 = 复制一份实例过去（含笔记/时间/附件/已访问，同 #4）
+        const copied = await copyItemTo(cur.id, container);
+        if (copied) {
+          toast.success(`已复制到「${containerTitle(container)}」`);
+        }
+        return;
       }
-      return;
-    }
-    // 取消勾选 = 删掉该图层下的全部同 POI 实例
-    const removing = myPeers.filter((p) => inContainer(p, container));
-    for (const p of removing) {
-      await deleteItem(p.id);
-    }
-    if (removing.some((p) => p.id === cur.id)) {
-      const survivor = myPeers.find(
-        (p) => !removing.some((r) => r.id === p.id)
-      );
-      if (survivor) {
-        toast.info("已移除，切换到同一地点的另一份实例");
-        selectItem(survivor.id);
+      // 取消勾选 = 删掉该图层下的全部同 POI 实例
+      const removing = myPeers.filter((p) => inContainer(p, container));
+      for (const p of removing) {
+        await deleteItem(p.id);
+      }
+      if (removing.some((p) => p.id === cur.id)) {
+        const survivor = myPeers.find(
+          (p) => !removing.some((r) => r.id === p.id)
+        );
+        if (survivor) {
+          toast.info("已移除，切换到同一地点的另一份实例");
+          selectItem(survivor.id);
+        } else {
+          toast.success("已移除");
+          clearSelection();
+        }
       } else {
         toast.success("已移除");
-        clearSelection();
       }
-    } else {
-      toast.success("已移除");
-    }
+    });
   };
 
   const toggleVisited = () => {

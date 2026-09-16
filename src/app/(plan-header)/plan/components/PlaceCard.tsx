@@ -7,16 +7,16 @@ import {
   Clock,
   Link as LinkIcon,
   Paperclip,
-  Wallet,
 } from "lucide-react";
-import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import type { PlaceItem } from "@/types/place";
 import { usePlaces } from "@/context/places-context";
-import { cn } from "@/lib/utils";
+import { useExpenses } from "@/context/expenses-context";
+import { cn, formatCurrency } from "@/lib/utils";
+import LinkedExpenseButton from "./overview/LinkedExpenseButton";
 import VisitedButton, { visitedToggleFeedback } from "./VisitedButton";
 import PlaceKindBadge from "./PlaceKindBadge";
 import { placeKindOf } from "@/lib/place-kinds";
@@ -44,6 +44,7 @@ export default function PlaceCard({ item }: { item: PlaceItem }) {
  */
 function PlaceCardBody({ item }: { item: PlaceItem }) {
   const { selectItem, itemNumber, itemColor, updateItem } = usePlaces();
+  const { expenses } = useExpenses();
 
   const [expanded, setExpanded] = useState(false);
   const [note, setNote] = useState(item.note ?? "");
@@ -103,6 +104,16 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
   const timeSet = item.timeFrom && item.timeTo;
   const timeText = timeSet ? `${item.timeFrom} - ${item.timeTo}` : null;
   const noteText = item.note?.trim();
+
+  /*
+   * 收起态要显示的那个金额。展开后同一个数在操作行里还有一个框（见下面的
+   * LinkedExpenseButton），所以这里只给收起态用 —— 不然一屏两个金额。
+   *
+   * 查两遍是故意的：这一处只是个显示用的 span，那个按钮自带自己的查询和两个弹窗。
+   */
+  const linkedExpense = expenses.find(
+    (e) => e.linkedItemType === "place" && e.linkedItemId === item.id,
+  );
 
   const handleRowClick = () => {
     if (expanded) {
@@ -170,6 +181,19 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
           )}
         </div>
 
+        {/*
+          收起态也能看到这笔地点上有钱。
+          做成纯 span 不是按钮：这一整行已经是 role="button"（点了展开），在里面
+          再套一个可点元素会变成"点一下既展开又弹窗"，而且 role=button 里不该放
+          交互子元素。要改金额就展开点那个蓝框。
+          !expanded：展开后同一个金额在操作行里还有一个框，留着这里就显示两遍。
+        */}
+        {!expanded && linkedExpense && (
+          <span className="mt-0.5 shrink-0 rounded-md bg-blue-50 px-1.5 py-0.5 text-xs font-semibold text-blue-600">
+            {formatCurrency(linkedExpense.amount, linkedExpense.currency)}
+          </span>
+        )}
+
         {/* 展开箭头 */}
         <ChevronRight
           className={cn(
@@ -214,22 +238,24 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
               url={item.url}
               onSave={(url) => updateItem(item.id, { url })}
             />
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-xs gap-1 text-gray-600"
-              onClick={() =>
-                toast.info("添加费用", {
-                  description: "费用功能后续完善",
-                })
-              }
-            >
-              <Wallet className="h-3.5 w-3.5" />
-              添加费用
-            </Button>
+            {/*
+              有费用就把它本身显示出来（蓝框 + 金额），没有才是「添加费用」。
+              以前无论有没有都写死「添加费用」，于是从预算里给这个地点记过账之后，
+              卡片上仍然什么都没有 —— 看着像没记上。
+
+              金额是费用表的视图，不在卡上另存；两个弹窗也归它自己管，见
+              LinkedExpenseButton。航班卡、住宿卡上那一格是同一个组件。
+            */}
+            <LinkedExpenseButton
+              linkedItemType="place"
+              linkedItemId={item.id}
+              // 类别按地点默认「门票」，日期落在这一天，用户只需填个金额
+              prefill={{ name: item.name, category: "门票", date: item.dayDate ?? "" }}
+            />
           </div>
         </div>
       )}
+
     </div>
   );
 }

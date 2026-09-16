@@ -1,10 +1,18 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { flights, type Flight, type NewFlight } from "@/db/schema";
 import { deletePlaceItemsBySource } from "@/actions/places";
+import { deleteExpensesByLinkedItem } from "@/actions/expenses";
+
+/*
+ * 本文件所有 action 都不调 revalidatePath。
+ * 航班这份数据客户端有完整副本（BookingsProvider，拿 page.tsx 的 props 只当**初值**），
+ * 列表顺序、卡片上的费用都由它自己维护 —— 服务端重渲染一次没人消费，白跑一趟
+ * （这个页面一次渲染要打 8 条查询，每条都是一趟到 Neon 的 HTTPS）。
+ * 判据和详细理由见 actions/trips.ts 里 updateTripBudget 上方那段。
+ */
 
 /**
  * 新增航班：插入 flights 表并返回带 uuid 的整行，供前端直接追加到列表。
@@ -26,7 +34,6 @@ export async function createFlight(
     .insert(flights)
     .values({ ...data, tripId, position: last ? last.position + 1 : 0 })
     .returning();
-  revalidatePath(`/plan/${tripId}`);
   return row;
 }
 
@@ -97,7 +104,6 @@ export async function updateFlightById(
     })
     .where(eq(flights.id, id))
     .returning();
-  if (row) revalidatePath(`/plan/${row.tripId}`);
   return row ?? null;
 }
 
@@ -119,16 +125,102 @@ export async function reorderFlights(
         .where(and(eq(flights.id, id), eq(flights.tripId, tripId)))
     )
   );
-  revalidatePath(`/plan/${tripId}`);
 }
 
 /**
- * 删除航班：按行 id 删除，并级联删除它自动生成的地点实例
- * （sourceKind='flight' + 该 id；出发点/到达点机场各一份都会一起删）。
- * trip 页面是本会话内的客户端 state 即时更新的，这里 revalidate 只是保证
- * 未来任何一次服务端渲染读到的是删除后的数据。
+ * 删除航班：按行 id 删除，并级联删掉两样跟着它的东西 ——
+ *  - 它自动生成的地点实例（sourceKind='flight' + 该 id；出发/到达机场各一份）；
+ *  - 记在它上面的费用（linkedItemType='flight' + 该 id），否则预算里会留下一条
+ *    挂在已删航班上的「航班」费用。
+ *
+ * 两个级联互不依赖，并发发出去：到 Neon 一趟往返一两秒，串行是相加、并发取最大。
+ * 这里三个删除都不 revalidatePath：这一屏的真源是 BookingsProvider 的本地态，
+ * 服务端那份渲染结果只在下次首屏播种时用一次，而下次首屏本来就重新查（见文件顶部）。
  */
 export async function deleteFlightById(id: string): Promise<void> {
   await getDb().delete(flights).where(eq(flights.id, id));
-  await deletePlaceItemsBySource("flight", id);
+  await Promise.all([
+    deletePlaceItemsBySource("flight", id),
+    deleteExpensesByLinkedItem("flight", id),
+  ]);
+}
+
+/* ============================================================
+ * Undo / Redo：整体快照同步（只同步这一张表）
+ * ============================================================ */
+
+/**
+ * 把 trip 的 flights 整体替换成快照里的状态。撤销栈调用，别的地方不用碰。
+ *
+ * 和住宿拆成两个 action 是安全的：flights / hotels 之间没有外键（机场地点、费用
+ * 都只是按 id 松散引用），所以两者可以并发发出去。反例见 syncPlacesSnapshot 上那段
+ * ——items 和 lists 拆开就会撞外键。
+ *
+ * ⚠️ 复原一趟被删的航班**不会**顺便把它的机场地点和费用带回来：那两样在数据库里
+ * 没有外键指向 flights（见 deleteFlightById 的说明），级联是那一处代码手写的。
+ * 它们由同一份快照的 places / expenses 两片负责，这就是快照必须装全的原因。
+ */
+export async function syncFlightsSnapshot(
+  tripId: string,
+  snapshot: Flight[]
+): Promise<void> {
+  const db = getDb();
+
+  const snapIds = snapshot.map((f) => f.id);
+  const existing = await db
+    .select({ id: flights.id })
+    .from(flights)
+    .where(eq(flights.tripId, tripId));
+  const toDelete = existing.filter((f) => !snapIds.includes(f.id)).map((f) => f.id);
+  if (toDelete.length > 0) {
+    await db.delete(flights).where(inArray(flights.id, toDelete));
+  }
+
+  // 整批一条语句（Drizzle 把数组展开成多行 VALUES，冲突时用 excluded = 本次想插的值）；
+  // createdAt 有意不写：新插的走默认值，已存在的保持原来那一刻。
+  if (snapshot.length > 0) {
+    await db
+      .insert(flights)
+      .values(
+        snapshot.map((f) => ({
+          id: f.id,
+          tripId,
+          from: f.from,
+          fromCity: f.fromCity,
+          fromCode: f.fromCode,
+          to: f.to,
+          toCity: f.toCity,
+          toCode: f.toCode,
+          date: f.date,
+          departureTime: f.departureTime,
+          arrivalTime: f.arrivalTime,
+          flightNumber: f.flightNumber,
+          airline: f.airline,
+          position: f.position,
+          arrivalDate: f.arrivalDate,
+          arrivalLng: f.arrivalLng,
+          arrivalLat: f.arrivalLat,
+        }))
+      )
+      .onConflictDoUpdate({
+        target: flights.id,
+        set: {
+          from: sql`excluded.from`,
+          fromCity: sql`excluded.from_city`,
+          fromCode: sql`excluded.from_code`,
+          to: sql`excluded.to`,
+          toCity: sql`excluded.to_city`,
+          toCode: sql`excluded.to_code`,
+          date: sql`excluded.date`,
+          departureTime: sql`excluded.departure_time`,
+          arrivalTime: sql`excluded.arrival_time`,
+          flightNumber: sql`excluded.flight_number`,
+          airline: sql`excluded.airline`,
+          position: sql`excluded.position`,
+          arrivalDate: sql`excluded.arrival_date`,
+          arrivalLng: sql`excluded.arrival_lng`,
+          arrivalLat: sql`excluded.arrival_lat`,
+        },
+      });
+  }
 }

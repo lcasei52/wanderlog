@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -47,6 +47,21 @@ export default function ListShell({
 }: ListShellProps) {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
+
+  /*
+   * 草稿要跟着源头走（撤销把标题改回去时，再点开编辑框得是撤销后那个标题）。
+   *
+   * 但**只在源头真的变了的时候**才重置：`renamePlaceList` 不是乐观更新，是按服务器
+   * 回来的行改 state，所以提交后的那一两秒里 `title` 还是旧值 —— 照着它重置会把用户
+   * 刚打的新标题擦掉。这里盯的是"title 这个值变了没"，而不是"渲染了几次"，自己那次
+   * 改名的回音（旧值→新值）落下来时草稿本来就等于新值，重置也不会闪。
+   */
+  const lastSourceTitleRef = useRef(title);
+  useEffect(() => {
+    if (title === lastSourceTitleRef.current) return;
+    lastSourceTitleRef.current = title;
+    if (!isEditingTitle) setDraftTitle(title);
+  }, [title, isEditingTitle]);
 
   const submitTitle = () => {
     setIsEditingTitle(false);

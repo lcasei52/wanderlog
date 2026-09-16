@@ -71,7 +71,11 @@ function DialogContent({
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
             <Button
               variant="ghost"
-              className="absolute top-2 right-2"
+              /*
+               * 灰底圆钮（参照 Wanderlog 那个关闭键）。这里是全站所有弹窗共用的，
+               * 所以这个改动会跟着出现在每一个弹窗上。
+               */
+              className="absolute top-2.5 right-2.5 rounded-full bg-gray-100 hover:bg-gray-200"
               size="icon-sm"
             >
               <XIcon

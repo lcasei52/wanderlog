@@ -1,9 +1,9 @@
 "use server";
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
 import { getDb } from "@/db/client";
 import {
+  expenses,
   lists,
   placeItems,
   type List,
@@ -14,6 +14,16 @@ import type {
   PlaceItemInput,
   PlaceItemPatch,
 } from "@/types/place";
+import { deleteExpensesByLinkedItem } from "@/actions/expenses";
+
+/*
+ * 本文件所有 action 都不调 revalidatePath。
+ *
+ * 地点这份数据客户端有完整副本（PlacesProvider，拿 page.tsx 的 props 只当**初值**），
+ * 列表、卡片、以及撤销时的整体替换都由它自己维护 —— 服务端重渲染一次没人消费，
+ * 白跑一趟（这个页面一次渲染要打 8 条查询，每条都是一趟到 Neon 的 HTTPS）。
+ * 判据和详细理由见 actions/trips.ts 里 updateTripBudget 上方那段。
+ */
 
 /* ============================================================
  * 内部工具：取某容器（list / day）内当前最大的 position，新行排在其后。
@@ -97,7 +107,6 @@ export async function addPlaceItem(
       visited: input.visited ?? false,
     })
     .returning();
-  revalidatePath(`/plan/${tripId}`);
   return row;
 }
 
@@ -133,7 +142,6 @@ export async function updatePlaceItem(
     })
     .where(eq(placeItems.id, id))
     .returning();
-  if (row) revalidatePath(`/plan/${row.tripId}`);
   return row ?? null;
 }
 
@@ -155,23 +163,33 @@ export async function reorderPlaceItems(
         .where(and(eq(placeItems.id, id), eq(placeItems.tripId, tripId)))
     )
   );
-  revalidatePath(`/plan/${tripId}`);
 }
 
-/** 删除一份实例（只删这一份，其它容器里的副本不受影响） */
+/**
+ * 删除一份实例（只删这一份，其它容器里的副本不受影响）。
+ *
+ * 挂在**这一份**上的费用跟着走：它可能是从这张卡上记的，也可能是在预算里
+ * 「从您的行程中选择」挑到这一份记的 —— 两种入库后长得一模一样
+ * （linkedItemType='place' + 本行 id），都该随它消失，不该在预算里留一条
+ * 挂在已删地点上的账。别的副本 id 不同，不受影响。
+ */
 export async function deletePlaceItem(id: string): Promise<void> {
-  const db = getDb();
-  const [existing] = await db
-    .select({ tripId: placeItems.tripId })
-    .from(placeItems)
-    .where(eq(placeItems.id, id))
-    .limit(1);
-  if (!existing) return;
-  await db.delete(placeItems).where(eq(placeItems.id, id));
-  revalidatePath(`/plan/${existing.tripId}`);
+  // 两处互不依赖，并发发出去（到 Neon 一趟往返一两秒，串行是相加）。
+  // 不再先 SELECT 一次拿 tripId —— 那是给 revalidatePath 用的；删不存在的行本来就是
+  // 空操作，幂等不需要靠那次查询。
+  await Promise.all([
+    getDb().delete(placeItems).where(eq(placeItems.id, id)),
+    deleteExpensesByLinkedItem("place", id),
+  ]);
 }
 
-/** 删除某父记录（航班/酒店）自动生成的绑定实例（source_kind + source_id） */
+/**
+ * 删除某父记录（航班/酒店）自动生成的绑定实例（source_kind + source_id）。
+ *
+ * 这些实例上记过的费用也要一起删（跟 deletePlaceItem 同一条规矩）：机场/酒店
+ * 那几行在当天列表里也是完整的地点卡，可以点「添加费用」，删航班时它们会跟着
+ * 消失，留下的费用就成了挂在已删地点上的孤儿。一次 inArray 删掉，不逐个发。
+ */
 export async function deletePlaceItemsBySource(
   sourceKind: string,
   sourceId: string
@@ -185,8 +203,20 @@ export async function deletePlaceItemsBySource(
         eq(placeItems.sourceId, sourceId)
       )
     )
-    .returning({ tripId: placeItems.tripId });
-  for (const r of removed) revalidatePath(`/plan/${r.tripId}`);
+    .returning({ id: placeItems.id });
+  if (removed.length === 0) return;
+
+  await db
+    .delete(expenses)
+    .where(
+      and(
+        eq(expenses.linkedItemType, "place"),
+        inArray(
+          expenses.linkedItemId,
+          removed.map((r) => r.id)
+        )
+      )
+    );
 }
 
 /**
@@ -233,7 +263,6 @@ export async function copyPlaceItem(
       // 副本落在别的容器里，下一个地点多半是别人，抄过去反而是错的
     })
     .returning();
-  revalidatePath(`/plan/${source.tripId}`);
   return row;
 }
 
@@ -248,7 +277,6 @@ export async function deletePlaceItemsInContainer(
       ? and(eq(placeItems.tripId, tripId), eq(placeItems.listId, container.listId))
       : and(eq(placeItems.tripId, tripId), eq(placeItems.dayDate, container.dayDate));
   await db.delete(placeItems).where(cond);
-  revalidatePath(`/plan/${tripId}`);
 }
 
 /* ============================================================
@@ -271,7 +299,6 @@ export async function addPlaceList(
     .insert(lists)
     .values({ tripId, title, position: last ? last.position + 1 : 0 })
     .returning();
-  revalidatePath(`/plan/${tripId}`);
   return row;
 }
 
@@ -286,7 +313,6 @@ export async function renamePlaceList(
     .set({ title })
     .where(eq(lists.id, listId))
     .returning();
-  if (row) revalidatePath(`/plan/${row.tripId}`);
   return row ?? null;
 }
 
@@ -316,11 +342,10 @@ export async function deletePlaceList(listId: string): Promise<void> {
       position: 0,
     });
   }
-  revalidatePath(`/plan/${existing.tripId}`);
 }
 
 /* ============================================================
- * Undo / Redo：整体快照同步
+ * Undo / Redo：整体快照同步（只同步这一张表自己的东西）
  * ============================================================ */
 
 export interface PlacesSnapshot {
@@ -329,7 +354,13 @@ export interface PlacesSnapshot {
 }
 
 /**
- * 把 trip 的 items + lists 整体替换为快照里的状态。
+ * 把 trip 的 place_items + lists 整体替换成快照里的状态。
+ *
+ * ⚠️ items 和 lists 必须留在这**同一个** action 里，且先 lists 后 items：
+ * place_items.list_id 有外键指回 lists、而且是 ON DELETE CASCADE，删 list 会连带
+ * 删掉它下面的 item，插 item 又要求 list 已经存在。把这两张表拆成两个并行 action
+ * （看着很自然的一刀）会直接撞外键。费用**不**在这里，它有 expenses.ts 里的
+ * syncExpensesSnapshot —— 每个 action 只管自己的表，别再顺手写别人的表。
  */
 export async function syncPlacesSnapshot(
   tripId: string,
@@ -338,6 +369,9 @@ export async function syncPlacesSnapshot(
   const db = getDb();
 
   // ---- lists ----
+  // 逐行而不是合并成一条语句：lists 上有 (trip_id, position) 唯一索引
+  // （lists_trip_position_unique），多行一条语句时中间态会撞它。行数很少，代价可忽略。
+  // 从大到小插：快照是"追加在最后"的场景下，先占住大的位置才不会撞上还在那儿的旧行。
   const snapListIds = snapshot.lists.map((l) => l.id);
   const existingLists = await db
     .select({ id: lists.id })
@@ -361,6 +395,7 @@ export async function syncPlacesSnapshot(
   }
 
   // ---- place_items ----
+  // 先删掉快照里没有的（顺序不能和下面的插入对调）
   const snapItemIds = snapshot.items.map((it) => it.id);
   const existingItems = await db
     .select({ id: placeItems.id })
@@ -372,32 +407,62 @@ export async function syncPlacesSnapshot(
   if (toDeleteItems.length > 0) {
     await db.delete(placeItems).where(inArray(placeItems.id, toDeleteItems));
   }
-  for (const it of snapshot.items) {
+  // 整批一条语句：Drizzle 把数组展开成多行 VALUES，冲突时用 excluded（= 本次想插的值）
+  // 覆盖旧行。之前是逐行 insert + 逐行往返，20 个地点的撤销就是 20 趟（到 Neon 一趟
+  // 一两秒，很可观）。createdAt 有意不写：新插的走默认值，已存在的保持原来那一刻。
+  if (snapshot.items.length > 0) {
     await db
       .insert(placeItems)
-      .values({
-        id: it.id, tripId,
-        groupKey: it.groupKey, sourceKind: it.sourceKind, sourceId: it.sourceId,
-        name: it.name, address: it.address, tel: it.tel, type: it.type,
-        photo: it.photo, lng: it.lng, lat: it.lat,
-        listId: it.listId, dayDate: it.dayDate, position: it.position,
-        note: it.note, description: it.description,
-        timeFrom: it.timeFrom, timeTo: it.timeTo,
-        url: it.url, visited: it.visited, routeModeToNext: it.routeModeToNext,
-      })
+      .values(
+        snapshot.items.map((it) => ({
+          id: it.id,
+          tripId,
+          groupKey: it.groupKey,
+          sourceKind: it.sourceKind,
+          sourceId: it.sourceId,
+          name: it.name,
+          address: it.address,
+          tel: it.tel,
+          type: it.type,
+          photo: it.photo,
+          lng: it.lng,
+          lat: it.lat,
+          listId: it.listId,
+          dayDate: it.dayDate,
+          position: it.position,
+          note: it.note,
+          description: it.description,
+          timeFrom: it.timeFrom,
+          timeTo: it.timeTo,
+          url: it.url,
+          visited: it.visited,
+          routeModeToNext: it.routeModeToNext,
+        })),
+      )
       .onConflictDoUpdate({
         target: placeItems.id,
         set: {
-          groupKey: it.groupKey, sourceKind: it.sourceKind, sourceId: it.sourceId,
-          name: it.name, address: it.address, tel: it.tel, type: it.type,
-          photo: it.photo, lng: it.lng, lat: it.lat,
-          listId: it.listId, dayDate: it.dayDate, position: it.position,
-          note: it.note, description: it.description,
-          timeFrom: it.timeFrom, timeTo: it.timeTo,
-          url: it.url, visited: it.visited, routeModeToNext: it.routeModeToNext,
+          groupKey: sql`excluded.group_key`,
+          sourceKind: sql`excluded.source_kind`,
+          sourceId: sql`excluded.source_id`,
+          name: sql`excluded.name`,
+          address: sql`excluded.address`,
+          tel: sql`excluded.tel`,
+          type: sql`excluded.type`,
+          photo: sql`excluded.photo`,
+          lng: sql`excluded.lng`,
+          lat: sql`excluded.lat`,
+          listId: sql`excluded.list_id`,
+          dayDate: sql`excluded.day_date`,
+          position: sql`excluded.position`,
+          note: sql`excluded.note`,
+          description: sql`excluded.description`,
+          timeFrom: sql`excluded.time_from`,
+          timeTo: sql`excluded.time_to`,
+          url: sql`excluded.url`,
+          visited: sql`excluded.visited`,
+          routeModeToNext: sql`excluded.route_mode_to_next`,
         },
       });
   }
-
-  revalidatePath(`/plan/${tripId}`);
 }

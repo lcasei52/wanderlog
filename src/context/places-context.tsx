@@ -5,7 +5,6 @@ import {
   useCallback,
   useContext,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -23,6 +22,8 @@ import {
   type PlaceListRow,
 } from "@/types/place";
 import { getColorByListId } from "@/lib/colors";
+import { useExpenses } from "@/context/expenses-context";
+import { useHistory, useRegisterSnapshot } from "@/context/history-context";
 import {
   addPlaceItem,
   addPlaceList as addPlaceListAction,
@@ -31,7 +32,6 @@ import {
   deletePlaceList as deletePlaceListAction,
   renamePlaceList as renamePlaceListAction,
   reorderPlaceItems as reorderPlaceItemsAction,
-  syncPlacesSnapshot,
   updatePlaceItem as updatePlaceItemAction,
 } from "@/actions/places";
 
@@ -102,12 +102,6 @@ export interface PlacesContextValue {
   selectItem: (id: string) => void;
   clearSelection: () => void;
   setDateRange: (range: DateRange | undefined) => void;
-
-  // Undo / Redo
-  undo: () => void;
-  redo: () => void;
-  canUndo: boolean;
-  canRedo: boolean;
 }
 
 const PlacesContext = createContext<PlacesContextValue | null>(null);
@@ -158,6 +152,17 @@ export function PlacesProvider({
   seeds: PlacesSeeds;
   children: ReactNode;
 }) {
+  /*
+   * 删地点时要顺手把挂在它上面的费用从本地费用表里摘掉（服务端已经一起删了）。
+   * 合法是因为 ExpensesProvider 在 TripWorkspace 里是 PlacesProvider 的**外层**，
+   * 别把这两层的顺序调过来。
+   *
+   * 撤销栈现在在所有 provider 外面（见 history-context），这里够不到它，也不该够到 ——
+   * 本组件只管把"自己这一片"登记进去、动手前 push 一次。
+   */
+  const { removeExpensesByLinkedItem } = useExpenses();
+  const { push } = useHistory();
+
   const [items, setItems] = useState<PlaceItem[]>(seeds.items);
   const [placeLists, setPlaceLists] = useState<PlaceListRow[]>(seeds.placeLists);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -174,52 +179,22 @@ export function PlacesProvider({
 
   const days = useMemo(() => buildDays(dateRange), [dateRange]);
 
-  // ---- Undo / Redo 历史栈 ----
-  const MAX_HISTORY = 50;
-  type Snapshot = { items: PlaceItem[]; placeLists: PlaceListRow[] };
-  const pastRef = useRef<Snapshot[]>([]);
-  const futureRef = useRef<Snapshot[]>([]);
-  const [historyVersion, setHistoryVersion] = useState(0);
-
-  const pushSnapshot = useCallback(() => {
-    pastRef.current = [
-      ...pastRef.current.slice(-(MAX_HISTORY - 1)),
-      { items, placeLists },
-    ];
-    futureRef.current = [];
-    setHistoryVersion((v) => v + 1);
-  }, [items, placeLists]);
-
-  const undo = useCallback(() => {
-    const past = pastRef.current;
-    if (past.length === 0) return;
-    const snap = past[past.length - 1];
-    pastRef.current = past.slice(0, -1);
-    futureRef.current = [...futureRef.current, { items, placeLists }];
-    setItems(snap.items);
-    setPlaceLists(snap.placeLists);
-    setHistoryVersion((v) => v + 1);
-    syncPlacesSnapshot(tripId, { items: snap.items, lists: snap.placeLists }).catch(
-      (err) => console.error("undo 同步失败:", err),
-    );
-  }, [items, placeLists, tripId]);
-
-  const redo = useCallback(() => {
-    const future = futureRef.current;
-    if (future.length === 0) return;
-    const snap = future[future.length - 1];
-    futureRef.current = future.slice(0, -1);
-    pastRef.current = [...pastRef.current, { items, placeLists }];
-    setItems(snap.items);
-    setPlaceLists(snap.placeLists);
-    setHistoryVersion((v) => v + 1);
-    syncPlacesSnapshot(tripId, { items: snap.items, lists: snap.placeLists }).catch(
-      (err) => console.error("redo 同步失败:", err),
-    );
-  }, [items, placeLists, tripId]);
-
-  const canUndo = pastRef.current.length > 0;
-  const canRedo = futureRef.current.length > 0;
+  /*
+   * 撤销栈不在这里 —— 它已经抬到所有 provider 外面了（src/context/history-context.tsx）。
+   * 本组件把自己这一片（items + placeLists）登记进去，每个改了行程数据的动作在动手
+   * **之前**调一次 push()。
+   *
+   * ⚠️ 加新的 mutator、或者删掉某个 push() 之前，先读 history-context 顶部那段撤销
+   * 契约：哪些进快照、哪些有意不进、以及"一次手势一份快照"的规矩都在那里。
+   */
+  useRegisterSnapshot(
+    "places",
+    () => ({ items, lists: placeLists }),
+    (slice) => {
+      setItems(slice.items);
+      setPlaceLists(slice.lists);
+    }
+  );
 
   /** 按容器分组的排序结果（map 缓存，list/day 都走 keyOf） */
   const containerGroups = useMemo(() => {
@@ -311,7 +286,8 @@ export function PlacesProvider({
       container: PlaceContainer,
       opts?: { select?: boolean; atStart?: boolean },
     ) => {
-      pushSnapshot();
+      // push 必须在第一个 await 之前：它取的是"上一次已提交渲染"的状态
+      push();
       try {
         const row = await addPlaceItem(tripId, container, input, {
           atStart: opts?.atStart,
@@ -327,12 +303,12 @@ export function PlacesProvider({
         return null;
       }
     },
-    [tripId, selectItem, pushSnapshot],
+    [tripId, selectItem, push],
   );
 
   const copyItemTo = useCallback(
     async (itemId: string, container: PlaceContainer) => {
-      pushSnapshot();
+      push();
       try {
         const row = await copyPlaceItem(itemId, container);
         if (row) setItems((prev) => [...prev, row]);
@@ -342,25 +318,32 @@ export function PlacesProvider({
         return null;
       }
     },
-    [pushSnapshot],
+    [push],
   );
 
   const deleteItem = useCallback(
     async (id: string) => {
-      pushSnapshot();
+      push();
       try {
         await deletePlaceItemAction(id);
         setItems((prev) => prev.filter((it) => it.id !== id));
         setSelectedItemId((cur) => (cur === id ? null : cur));
+        // 挂在这一份上的费用服务端已一起删（见 actions/places.ts），本地跟着清
+        removeExpensesByLinkedItem("place", id);
       } catch (err) {
         console.error("删除地点失败:", err);
       }
     },
-    [pushSnapshot],
+    [push, removeExpensesByLinkedItem],
   );
 
   const removeItemsBySource = useCallback(
     (sourceKind: string, sourceId: string) => {
+      // 先按当前 items 找出要删的那几份：它们上面记过的费用也要清
+      // （不在 setItems 的 updater 里做，那个函数必须是纯的）
+      const doomed = items.filter(
+        (it) => it.sourceKind === sourceKind && it.sourceId === sourceId,
+      );
       // 若当前选中的正是被删的那一份，先清空选择（避免在 updater 里做副作用）
       const sel = selectedItemId ? item(selectedItemId) : null;
       if (sel && sel.sourceKind === sourceKind && sel.sourceId === sourceId) {
@@ -371,13 +354,14 @@ export function PlacesProvider({
           (it) => !(it.sourceKind === sourceKind && it.sourceId === sourceId)
         )
       );
+      for (const d of doomed) removeExpensesByLinkedItem("place", d.id);
     },
-    [selectedItemId, item],
+    [items, selectedItemId, item, removeExpensesByLinkedItem],
   );
 
   const updateItem = useCallback(
     async (id: string, patch: PlaceItemPatch) => {
-      pushSnapshot();
+      push();
       try {
         const row = await updatePlaceItemAction(id, patch);
         if (row) {
@@ -387,12 +371,12 @@ export function PlacesProvider({
         console.error("更新地点失败:", err);
       }
     },
-    [pushSnapshot],
+    [push],
   );
 
   const reorderItems = useCallback(
     async (orderedIds: string[]) => {
-      pushSnapshot();
+      push();
       const order = new Map(orderedIds.map((id, i) => [id, i]));
       setItems((prev) =>
         prev.map((it) =>
@@ -405,12 +389,12 @@ export function PlacesProvider({
         console.error("地点排序失败:", err);
       }
     },
-    [tripId, pushSnapshot],
+    [tripId, push],
   );
 
   const addPlaceList = useCallback(
     async (title?: string) => {
-      pushSnapshot();
+      push();
       try {
         const row = await addPlaceListAction(tripId, title);
         if (row) setPlaceLists((prev) => [...prev, row]);
@@ -420,11 +404,11 @@ export function PlacesProvider({
         return null;
       }
     },
-    [tripId, pushSnapshot],
+    [tripId, push],
   );
 
   const renamePlaceList = useCallback(async (listId: string, title: string) => {
-    pushSnapshot();
+    push();
     try {
       const row = await renamePlaceListAction(listId, title);
       if (row) {
@@ -433,10 +417,10 @@ export function PlacesProvider({
     } catch (err) {
       console.error("重命名列表失败:", err);
     }
-  }, [pushSnapshot]);
+  }, [push]);
 
   const deletePlaceList = useCallback(async (listId: string) => {
-    pushSnapshot();
+    push();
     try {
       await deletePlaceListAction(listId);
       setPlaceLists((prev) => prev.filter((l) => l.id !== listId));
@@ -444,7 +428,7 @@ export function PlacesProvider({
     } catch (err) {
       console.error("删除列表失败:", err);
     }
-  }, [pushSnapshot]);
+  }, [push]);
 
   const value = useMemo<PlacesContextValue>(
     () => ({
@@ -477,10 +461,6 @@ export function PlacesProvider({
       selectItem,
       clearSelection,
       setDateRange,
-      undo,
-      redo,
-      canUndo,
-      canRedo,
     }),
     [
       tripId,
@@ -512,11 +492,6 @@ export function PlacesProvider({
       selectItem,
       clearSelection,
       setDateRange,
-      undo,
-      redo,
-      canUndo,
-      canRedo,
-      historyVersion,
     ],
   );
 

@@ -36,6 +36,9 @@ export const trips = pgTable("trips", {
   hiddenLayers: jsonb("hidden_layers").$type<string[]>().notNull().default([]),
   coverImageUrl: text("cover_image_url"), // 网络图片 URL（Unsplash 等）
   coverImageData: text("cover_image_data"), // 本地图片 base64 data URI
+  // 预算设置（可选）
+  budget: doublePrecision("budget"), // 行程总预算
+  budgetCurrency: text("budget_currency").default("CNY"), // 预算币种
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -275,3 +278,63 @@ export const routePlans = pgTable(
 
 export type RoutePlanRow = typeof routePlans.$inferSelect;
 export type NewRoutePlanRow = typeof routePlans.$inferInsert;
+
+/* ============================================================
+ * trip_members —— 行程成员（用于费用分摊）
+ * 存储参与行程的成员信息（email + 显示名 + 头像）。
+ * position 控制展示顺序，每个行程各有独立的成员列表。
+ * ============================================================ */
+export const tripMembers = pgTable(
+  "trip_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tripId: text("trip_id")
+      .notNull()
+      .references(() => trips.id, { onDelete: "cascade" }),
+    email: text("email").notNull(), // 成员邮箱（唯一标识）
+    displayName: text("display_name").notNull(), // 显示名称
+    avatar: text("avatar"), // 头像 URL（可选）
+    position: integer("position").notNull().default(0), // 展示顺序
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    // 同一行程内成员邮箱唯一
+    uniqueIndex("trip_members_trip_email_unique").on(t.tripId, t.email),
+  ],
+);
+
+export type TripMember = typeof tripMembers.$inferSelect;
+export type NewTripMember = typeof tripMembers.$inferInsert;
+
+/* ============================================================
+ * expenses —— 费用记录
+ * 记录行程中的每一笔费用，支持关联行程项目（航班/住宿/地点）、
+ * 指定付款人、配置分摊成员。
+ * ============================================================ */
+export const expenses = pgTable("expenses", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tripId: text("trip_id")
+    .notNull()
+    .references(() => trips.id, { onDelete: "cascade" }),
+  amount: doublePrecision("amount").notNull(), // 金额
+  currency: text("currency").notNull().default("CNY"), // 币种，默认人民币
+  category: text("category").notNull(), // 类别（航班/住宿/租车等11个）
+  name: text("name").notNull(), // 费用名称（如"北京-上海机票"）
+  description: text("description"), // 可选的详细说明
+  date: date("date"), // 费用发生日期（可选，"YYYY-MM-DD"）
+  // 付款人（指向 trip_members.id）
+  paidBy: uuid("paid_by")
+    .notNull()
+    .references(() => tripMembers.id, { onDelete: "restrict" }),
+  // 分摊成员 ID 列表（jsonb 数组，存 trip_members.id[]）
+  // 空数组表示"不分摊"（只有付款人自己承担）
+  splitWith: jsonb("split_with").$type<string[]>().notNull().default([]),
+  // 关联的行程项目（可选，用于从卡片快捷添加时自动填充）
+  linkedItemType: text("linked_item_type"), // 'flight' | 'hotel' | 'place'
+  linkedItemId: text("linked_item_id"), // 对应表的行 id
+  position: integer("position").notNull().default(0), // 列表内排序
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type Expense = typeof expenses.$inferSelect;
+export type NewExpense = typeof expenses.$inferInsert;

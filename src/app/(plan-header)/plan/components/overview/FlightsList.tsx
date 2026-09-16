@@ -35,6 +35,7 @@ import FlightFormFields, {
 import SortableCardGroup from "@/components/SortableCardGroup";
 import { useBookings } from "@/context/bookings-context";
 import { usePlaces } from "@/context/places-context";
+import { useHistory } from "@/context/history-context";
 import type { PlaceItemInput } from "@/types/place";
 import type { FlightApiResult } from "@/types/flight";
 import { getAirportByName, getAirportInfo } from "@/lib/airport-coordinates";
@@ -50,7 +51,9 @@ function toBeijingDate(iso: string): Date {
 export default function FlightsList() {
   const { flights, deleteFlight, addFlight, expanded, setExpanded, reorderFlights } =
     useBookings();
-  const { dateRange, days, addItem, removeItemsBySource } = usePlaces();
+  const { dateRange, days, addItem } = usePlaces();
+  // 加航班要连带挂两张机场地点卡，一次手势包进 batch，撤销才是一下退回去
+  const { batch } = useHistory();
 
   const [showFlightDialog, setShowFlightDialog] = useState(false);
   const [flightQuery, setFlightQuery] = useState("");
@@ -119,8 +122,13 @@ export default function FlightsList() {
     }
   };
 
-  /** 在某天的行程内自动挂一份机场地点实例（出发/到达机场各调一次），绑定到所属航班 */
-  const addAirportItem = (
+  /**
+   * 在某天的行程内自动挂一份机场地点实例（出发/到达机场各调一次），绑定到所属航班。
+   *
+   * 返回 promise 而不是发射后不管：这两份地点实例是"加航班"这个手势的一部分，
+   * 撤销栈要在整个手势结束前把它们记全（见 history-context 的 batch）。
+   */
+  const addAirportItem = async (
     dayDate: string,
     flightId: string,
     leg: {
@@ -130,7 +138,7 @@ export default function FlightsList() {
       lng: number | null;
       lat: number | null;
     },
-  ) => {
+  ): Promise<void> => {
     // 只限制该日必须在行程内。机场坐标在国内映射表里才带（地图上可画 marker）；
     // 不在表里（如柳州 LZH 等中小机场/国际段）仍照常生成地点实例——只是没有坐标、
     // 仅显示在当天列表里，地图不画。不能因为缺坐标就把降落/起飞机场整个漏掉。
@@ -144,7 +152,7 @@ export default function FlightsList() {
       sourceKind: "flight", // 删除航班时级联删除这两份机场地点
       sourceId: flightId,
     };
-    addItem(input, { kind: "day", dayDate }, { select: false });
+    await addItem(input, { kind: "day", dayDate }, { select: false });
   };
 
   const handleAddFlight = async () => {
@@ -165,41 +173,50 @@ export default function FlightsList() {
 
     setFlightAdding(true);
     try {
-      const created = await addFlight({
-        from: departure.city ?? departure.code,
-        fromCity: departure.airport,
-        fromCode: departure.code,
-        to: arrival.city ?? arrival.code,
-        toCity: arrival.airport,
-        toCode: arrival.code,
-        date: depDateIso,
-        departureTime: format(depBJ, "HH:mm"),
-        arrivalTime: format(arrBJ, "HH:mm"),
-        flightNumber: result.flightNumber,
-        airline: result.airline, // 查回来的航司要一起入库，否则只显示在弹窗预览里、卡片上没有
-        arrivalDate: arrDateIso,
-        arrivalLng: arrival.lng,
-        arrivalLat: arrival.lat,
+      // 整段是一个手势：入库航班 + 挂出发/到达两张机场地点卡。batch 让撤销栈只记
+      // 第一份快照（= 动手之前），按一下撤销这三样一起退回去。
+      const ok = await batch(async () => {
+        const created = await addFlight({
+          from: departure.city ?? departure.code,
+          fromCity: departure.airport,
+          fromCode: departure.code,
+          to: arrival.city ?? arrival.code,
+          toCity: arrival.airport,
+          toCode: arrival.code,
+          date: depDateIso,
+          departureTime: format(depBJ, "HH:mm"),
+          arrivalTime: format(arrBJ, "HH:mm"),
+          flightNumber: result.flightNumber,
+          airline: result.airline, // 查回来的航司要一起入库，否则只显示在弹窗预览里、卡片上没有
+          arrivalDate: arrDateIso,
+          arrivalLng: arrival.lng,
+          arrivalLat: arrival.lat,
+        });
+        if (!created) return false;
+        // 出发机场挂出发日、到达机场挂到达日（仅要求该日在行程内，坐标可有可无），都绑定到该航班。
+        // 并发送出（到 Neon 一趟往返一两秒，串行是相加），但要等它们都回来才算这次手势做完
+        await Promise.all([
+          addAirportItem(depDateIso, created.id, {
+            code: departure.code,
+            airport: departure.airport,
+            city: departure.city,
+            lng: departure.lng ?? null,
+            lat: departure.lat ?? null,
+          }),
+          addAirportItem(arrDateIso, created.id, {
+            code: arrival.code,
+            airport: arrival.airport,
+            city: arrival.city,
+            lng: arrival.lng ?? created.arrivalLng ?? null,
+            lat: arrival.lat ?? created.arrivalLat ?? null,
+          }),
+        ]);
+        return true;
       });
-      if (!created) {
+      if (!ok) {
         toast.error("添加失败，请重试");
         return;
       }
-      // 出发机场挂出发日、到达机场挂到达日（仅要求该日在行程内，坐标可有可无），都绑定到该航班
-      addAirportItem(depDateIso, created.id, {
-        code: departure.code,
-        airport: departure.airport,
-        city: departure.city,
-        lng: departure.lng ?? null,
-        lat: departure.lat ?? null,
-      });
-      addAirportItem(arrDateIso, created.id, {
-        code: arrival.code,
-        airport: arrival.airport,
-        city: arrival.city,
-        lng: arrival.lng ?? created.arrivalLng ?? null,
-        lat: arrival.lat ?? created.arrivalLat ?? null,
-      });
       toast.success("航班已添加");
       setShowFlightDialog(false);
       setFlightResult(null);
@@ -236,44 +253,55 @@ export default function FlightsList() {
 
     setFlightAdding(true);
     try {
-      const created = await addFlight({
-        flightNumber: manualDraft.flightNumber.trim(),
-        airline: manualDraft.airline.trim() || null,
-        from: manualDraft.from.trim(),
-        fromCity: manualDraft.fromCity.trim(),
-        fromCode: fromCode || null,
-        to: manualDraft.to.trim(),
-        toCity: manualDraft.toCity.trim(),
-        toCode: toCode || null,
-        date: manualDraft.date,
-        departureTime: manualDraft.departureTime,
-        arrivalTime: manualDraft.arrivalTime,
-        arrivalDate: manualDraft.arrivalDate || null,
+      // 与 handleAddFlight 同理：入库 + 挂机场地点卡是同一个手势，包进 batch
+      const ok = await batch(async () => {
+        const created = await addFlight({
+          flightNumber: manualDraft.flightNumber.trim(),
+          airline: manualDraft.airline.trim() || null,
+          from: manualDraft.from.trim(),
+          fromCity: manualDraft.fromCity.trim(),
+          fromCode: fromCode || null,
+          to: manualDraft.to.trim(),
+          toCity: manualDraft.toCity.trim(),
+          toCode: toCode || null,
+          date: manualDraft.date,
+          departureTime: manualDraft.departureTime,
+          arrivalTime: manualDraft.arrivalTime,
+          arrivalDate: manualDraft.arrivalDate || null,
+        });
+        if (!created) return false;
+        // 有码才挂：坐标查得到就带坐标（地图上能画），查不到也照样挂（只在当天列表里）
+        const pending: Promise<void>[] = [];
+        if (fromCode) {
+          const info = getAirportInfo(fromCode);
+          pending.push(
+            addAirportItem(manualDraft.date, created.id, {
+              code: fromCode,
+              airport: manualDraft.fromCity.trim(),
+              city: manualDraft.from.trim() || null,
+              lng: info?.lng ?? null,
+              lat: info?.lat ?? null,
+            })
+          );
+        }
+        if (toCode) {
+          const info = getAirportInfo(toCode);
+          pending.push(
+            addAirportItem(arrDateIso, created.id, {
+              code: toCode,
+              airport: manualDraft.toCity.trim(),
+              city: manualDraft.to.trim() || null,
+              lng: info?.lng ?? null,
+              lat: info?.lat ?? null,
+            })
+          );
+        }
+        await Promise.all(pending);
+        return true;
       });
-      if (!created) {
+      if (!ok) {
         toast.error("添加失败，请重试");
         return;
-      }
-      // 有码才挂：坐标查得到就带坐标（地图上能画），查不到也照样挂（只在当天列表里）
-      if (fromCode) {
-        const info = getAirportInfo(fromCode);
-        addAirportItem(manualDraft.date, created.id, {
-          code: fromCode,
-          airport: manualDraft.fromCity.trim(),
-          city: manualDraft.from.trim() || null,
-          lng: info?.lng ?? null,
-          lat: info?.lat ?? null,
-        });
-      }
-      if (toCode) {
-        const info = getAirportInfo(toCode);
-        addAirportItem(arrDateIso, created.id, {
-          code: toCode,
-          airport: manualDraft.toCity.trim(),
-          city: manualDraft.to.trim() || null,
-          lng: info?.lng ?? null,
-          lat: info?.lat ?? null,
-        });
       }
       toast.success("航班已添加");
       setShowFlightDialog(false);
@@ -287,8 +315,8 @@ export default function FlightsList() {
 
   const handleDeleteFlight = async (id: string) => {
     try {
+      // 机场地点与费用的清理收在 deleteFlight 里了（它才知道这个动作的全部后果）
       await deleteFlight(id);
-      removeItemsBySource("flight", id); // 同步清掉该航班自动生成的机场地点
       toast.success("航班已删除");
     } catch {
       toast.error("删除失败，请重试");
