@@ -22,6 +22,7 @@ import {
   inferFromFlight,
   inferFromHotel,
   inferFromPlace,
+  inferFromTrain,
   type PickableItem,
 } from "@/lib/expense-helpers";
 import AllItemsDialog from "./AllItemsDialog";
@@ -39,7 +40,7 @@ interface ItemPickerDialogProps {
 }
 
 /**
- * 「选择项目」：上半屏是行程里已有的项目（地点/航班/住宿），下半屏是类别快捷入口。
+ * 「选择项目」：上半屏是行程里已有的项目（地点/航班/住宿/火车），下半屏是类别快捷入口。
  * 中间用一条分隔线隔开。
  *
  * 视觉参照 Wanderlog：分区标题是黑色粗体（不是小号大写灰字），项目行没有边框、
@@ -64,7 +65,7 @@ export default function ItemPickerDialog({
     containerTitle,
     itemsInContainer,
   } = usePlaces();
-  const { flights, hotels } = useBookings();
+  const { flights, hotels, trains } = useBookings();
   const [showAll, setShowAll] = useState(false);
 
   const allItems = useMemo<PickableItem[]>(() => {
@@ -134,6 +135,21 @@ export default function ItemPickerDialog({
       };
     });
 
+    const trainItems = trains.map<PickableItem>((train) => {
+      const seed = inferFromTrain(train);
+      const label = formatExpenseDate(train.date);
+      return {
+        key: `train-${train.id}`,
+        name: seed.name,
+        category: seed.category,
+        origin: label ? `${label} 出发` : "火车",
+        // 上车站的乘车日（不是始发站发车日）：跨夜车的费用该记在上车那天
+        date: train.date,
+        linkedItemType: "train",
+        linkedItemId: train.id,
+      };
+    });
+
     const hotelItems = hotels.map<PickableItem>((hotel) => {
       const seed = inferFromHotel(hotel);
       const label = formatExpenseDate(hotel.checkIn);
@@ -148,13 +164,15 @@ export default function ItemPickerDialog({
       };
     });
 
-    return [...places, ...flightItems, ...hotelItems];
+    // 顺序跟概览那一列对齐：火车在住宿前面
+    return [...places, ...flightItems, ...trainItems, ...hotelItems];
   }, [
     items,
     placeLists,
     days,
     flights,
     hotels,
+    trains,
     containerOf,
     containerTitle,
     itemsInContainer,

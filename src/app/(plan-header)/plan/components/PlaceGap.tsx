@@ -142,8 +142,13 @@ interface PlaceDayGapProps {
 /**
  * 行程（Day）里两张卡之间的间隔，两件事：
  *
- * 1. 靠左一条竖向点线，把同一天的卡片"串"起来 —— 点的位置对齐卡片里那个
- *    序号圆标的中心（卡片 px-3 + 圆标 h-5 的一半 = 22px）。
+ * 1. 卡片左沿往里一点一条竖向点线，把同一天的卡片"串"起来 —— 线在 x = 24..26
+ *    （left-6 的 24px + w-0.5 的 2px），也就是卡片左沿往里 25px。
+ *    图钉是**压着卡片左沿**钉的（见 PlaceCard 的 -ml-6）：头是个 24px 的圆、中心
+ *    落在卡片左沿 x = 0 上，右边缘到 x = 12 —— 所以这条线其实是走在卡片里面的一根
+ *    "轨道"，跟钉头之间还隔着 12px。
+ *    要挪它改 left-6，想核对跟图钉的关系就一起看 PlaceCard 的 -ml-6（一对数，
+ *    动一个就瞄一眼另一个）。
  * 2. 点线右边一行"这段路怎么走"：交通方式图标 + 耗时 · 距离 + 下拉箭头，
  *    末尾是「路线」（跳高德导航页，并把我们地图上的那条线画出来）。
  *    点这行其余地方出下拉：三种方式的时间/距离、「隐藏路线」、「更改默认设置」。
@@ -186,16 +191,36 @@ export function PlaceDayGap({ from, to, dragging }: PlaceDayGapProps) {
   useEffect(() => {
     if (dragging || hidden || !inView) return;
     if (!points) return;
-    ensurePlan(routeKey(points.from, points.to, mode), points.from, points.to, mode);
+    ensurePlan(
+      routeKey(points.from, points.to, mode),
+      points.from,
+      points.to,
+      mode,
+    );
     // points 每次渲染都是新对象，这里按它的原始值做依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragging, hidden, inView, mode, fromLng, fromLat, toLng, toLat, ensurePlan]);
+  }, [
+    dragging,
+    hidden,
+    inView,
+    mode,
+    fromLng,
+    fromLat,
+    toLng,
+    toLat,
+    ensurePlan,
+  ]);
 
   // 下拉一展开就把另外两种也查了，好让菜单里三行都是现成的
   useEffect(() => {
     if (!menuOpen || !points) return;
     for (const m of ROUTE_MODES) {
-      ensurePlan(routeKey(points.from, points.to, m), points.from, points.to, m);
+      ensurePlan(
+        routeKey(points.from, points.to, m),
+        points.from,
+        points.to,
+        m,
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuOpen, fromLng, fromLat, toLng, toLat, ensurePlan]);
@@ -227,11 +252,12 @@ export function PlaceDayGap({ from, to, dragging }: PlaceDayGapProps) {
   const ModeIcon = MODE_ICON[mode];
 
   return (
-    // h-6：把间隔撑到 24px（同 PlaceListGap），点线才有"一段一段"的连接感
-    <div ref={ref} className="group/gap relative h-6">
+    // h-7：把间隔撑到 28px，点线才有"一段一段"的连接感（比 PlaceListGap 那个
+    // 24px 的间隔略宽一点：那边是列表，这里是日程，多给 4px 呼吸）
+    <div ref={ref} className="group/gap relative h-7">
       <span
         aria-hidden
-        className="absolute left-5.5 inset-y-0 w-0.5"
+        className="absolute left-6 inset-y-0 w-0.5"
         // 用重复渐变画点线：8px 一段（4px 实 + 4px 空），比 border-dashed 在这么短的高度上更匀
         style={{
           backgroundImage:

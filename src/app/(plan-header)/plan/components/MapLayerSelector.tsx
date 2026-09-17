@@ -3,7 +3,6 @@
 import { Route, RouteOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { getColorByListId } from "@/lib/colors";
 import type { PlaceList } from "@/types/place";
 import type { DayInfo } from "@/context/places-context";
 
@@ -32,6 +31,13 @@ interface MapLayerSelectorProps {
   showRoutes: boolean;
   /** 切换"画线/不画线"（打开 = 打开的图层里所有间隔的线都画出来） */
   onToggleRoutes: () => void;
+  /*
+   * 图层主色。从 MapView 透传进来，**不在这里自己 usePlaces()** ——
+   * 这个组件历来是纯 props 的（连 lists/days 都是外面给的），保持一样：
+   * 哪天要单独渲染它、或者写个 story，不必再配一套 Provider。
+   */
+  listColor: (listId: string) => string;
+  dayColor: (dayDate: string) => string;
 }
 
 function LayerPin({ color }: { color: string }) {
@@ -60,6 +66,8 @@ export default function MapLayerSelector({
   onDeselectAll,
   showRoutes,
   onToggleRoutes,
+  listColor,
+  dayColor,
 }: MapLayerSelectorProps) {
   if (!open) return null;
 
@@ -114,7 +122,7 @@ export default function MapLayerSelector({
                   key={list.id}
                   className="flex items-center gap-3 cursor-pointer group"
                 >
-                  <LayerPin color={getColorByListId(list.id)} />
+                  <LayerPin color={listColor(list.id)} />
                   <span className="flex-1 text-sm text-gray-900 group-hover:text-gray-700">
                     {list.title}
                   </span>
@@ -158,7 +166,7 @@ export default function MapLayerSelector({
                     key={day.dayDate}
                     className="flex items-center gap-3 cursor-pointer group"
                   >
-                    <LayerPin color={getColorByListId(`day-${day.dayDate}`)} />
+                    <LayerPin color={dayColor(day.dayDate)} />
                     <span className="flex-1 text-sm text-gray-900 group-hover:text-gray-700">
                       Day {day.dayNumber} · {day.label}
                     </span>

@@ -184,9 +184,10 @@ export default function HotelsList() {
             return hotel ? <HotelCard hotel={hotel} /> : null;
           }}
         />
+        {/* mt-2：同 FlightsList 那个「+ 添加一个航班」，只加上边距、下边距不变 */}
         <Button
           variant="link"
-          className="text-sm text-gray-400 hover:text-gray-600 p-0 h-auto"
+          className="mt-2 text-sm text-gray-400 hover:text-gray-600 p-0 h-auto"
           onClick={openHotelDialog}
         >
           + 添加一个住宿

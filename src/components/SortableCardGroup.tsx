@@ -34,6 +34,21 @@ interface SortableCardGroupProps {
   renderGap?: (beforeId: string, index: number, dragging: boolean) => ReactNode;
   /** 画一张卡的内容（不要自己画拖拽手柄/垃圾桶，这层统一提供） */
   renderItem: (id: string) => ReactNode;
+  /**
+   * 拖动柄在哪一侧：
+   * - `left`（默认）卡片**左沿外面**，跟垃圾桶对称；
+   * - `right` 卡片**里面**（地点卡用）—— 它左沿被雨滴图钉压着
+   *   （PlaceCard 的 -ml-6），柄摆在外面正好跟图钉抢那一块。
+   *
+   * ⚠️ 选 `right` 的卡片，自己第一行**要留出右边那点位置**（PlaceCard 的 pr-6）：
+   * 柄是浮在卡片上的，不留就会盖住行尾那个金额小标。
+   *
+   * 两边都是**垂直居中**（top-1/2 -translate-y-1/2）：卡片展开后柄跟着落在卡片中线上，
+   * 一眼看得出它是"这张卡"的柄。代价是展开态下它浮在右半边内容的中间（地点卡展开是个
+   * 笔记框，柄正好压在那个框的右沿上）—— 它平时是透明的，鼠标移到卡片上才亮，
+   * 又只在右沿那一小块，可以接受。
+   */
+  handleSide?: "left" | "right";
   /** 外层容器的额外 class */
   className?: string;
   /** 垃圾桶的提示文案 */
@@ -63,6 +78,7 @@ export default function SortableCardGroup({
   canDelete,
   renderGap,
   renderItem,
+  handleSide = "left",
   className,
   deleteTitle = "删除",
 }: SortableCardGroupProps) {
@@ -150,7 +166,8 @@ export default function SortableCardGroup({
 
             {renderItem(id)}
 
-            {/* 拖动柄：卡片左边外面，hover 卡片时浮现（canDrag 为 false 的卡不给柄） */}
+            {/* 拖动柄：hover 卡片时浮现（canDrag 为 false 的卡不给柄）。
+                位置见 handleSide —— 默认在卡片左沿外面，地点卡在卡片里面。 */}
             {(canDrag ? canDrag(id) : true) && (
               <Button
                 type="button"
@@ -159,7 +176,16 @@ export default function SortableCardGroup({
                 draggable
                 aria-label="拖动排序"
                 title="按住拖动，在容器内调整顺序"
-                className="absolute -left-6 top-1/2 -translate-y-1/2 cursor-grab text-gray-400 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-700 active:cursor-grabbing group-hover/card:opacity-100 focus-visible:opacity-100"
+                className={cn(
+                  "absolute cursor-grab text-gray-400 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-700 active:cursor-grabbing group-hover/card:opacity-100 focus-visible:opacity-100",
+                  handleSide === "right"
+                    ? // pointer-events 跟着 hover 开关：柄浮在卡片里，透明时若还能接指针，
+                      // 卡片右沿就多出一条点不动的死区（左边那个在卡片外面，没这问题）。
+                      // 鼠标移到卡片上 group-hover 先亮，柄就活了；拖拽照常。
+                      // （垂直居中的位置见 handleSide 的说明。）
+                      "right-1 top-1/2 -translate-y-1/2 pointer-events-none group-hover/card:pointer-events-auto focus-visible:pointer-events-auto"
+                    : "-left-6 top-1/2 -translate-y-1/2",
+                )}
                 onDragStart={(e) => handleDragStart(e, id)}
                 onDragEnd={reset}
               >

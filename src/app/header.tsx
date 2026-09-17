@@ -27,7 +27,8 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/60">
-      <div className="container mx-auto flex h-16 items-center justify-between px-4">
+      {/* app-shell：壳跟正文列同一个（见 globals.css），不然头部和下面的内容对不齐 */}
+      <div className="app-shell flex h-16 items-center justify-between">
         {/* 左侧：Logo + 导航 */}
         <div className="flex items-center gap-6">
           {/* Logo */}

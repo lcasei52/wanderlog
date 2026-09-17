@@ -344,6 +344,61 @@ export async function deletePlaceList(listId: string): Promise<void> {
   }
 }
 
+/**
+ * 挪位置的过渡偏移量。一趟行程的列表数是个位数，取 100 万足够把所有现存 position
+ * 甩在身后（那个位置只活在这条语句和后一条之间，之后全被改回 0..n-1）。
+ */
+const LIST_POSITION_OFFSET = 1_000_000;
+
+/**
+ * 重排地点列表：按传入顺序把 position 重写成下标 0..n-1。
+ *
+ * 调用方传的是**全部**列表的 id（这一列渲染出来的完整顺序），所以不会有漏网的行。
+ *
+ * ★ 分两步写是因为 lists 上有 `lists_trip_position_unique`（trip_id, position）——
+ *   这跟 reorderPlaceItems 不一样，那张表没有这样的索引，所以那边能一把 Promise.all
+ *   发出去。这里不行：把 [A(0), B(1), C(2)] 重排成 [B(0), C(1), A(2)]，每一条的目标
+ *   值都正被另一行占着，而 PostgreSQL 的唯一索引是**逐行立即**检查的（不 defer），
+ *   于是谁先执行谁撞索引，跟语句怎么发出去无关。
+ *   （`syncPlacesSnapshot` 里"从大到小逐行插"处理的是同一件事的另一面，可以对着看。）
+ *
+ *   所以先整体搬到 OFFSET 之外、再赋值：第一步的每条目标值都大于所有现取值，
+ *   第二步所有行的值都在 OFFSET 之外、目标值 0..n-1 谁也没占 —— 两步各自任意交错
+ *   都不会撞。代价是两趟往返，列表数很少，可忽略。
+ *
+ *   顺带一个好处：第一步是**整体平移**，相对顺序不变。万一第二步没跑成，
+ *   库里的顺序跟插入前一样（新列表就落回"追加在最后"），不会排成乱的。
+ *
+ * ★ 目前唯一的调用方是"在两条分隔线之间插一个新列表"（DetailContent.insertListAt），
+ *   每次重排前面都跟着一次新增 —— 这一点对**撤销**很关键：撤销走 syncPlacesSnapshot，
+ *   那边是"先删掉快照里没有的行、再按 position 从大到小逐行写"，插入手势里新加出来的
+ *   那一行正好会先被删掉，被它占着的那个位置也就空出来了，后面几行才写得进去。
+ *   以后要是加了"拖动排序列表"这种**纯重排**（不新增），撤销时一个 id 都不用删，
+ *   从大到小写照样会撞中间态 —— 那时要么让 syncPlacesSnapshot 也先整体平移一次，
+ *   要么把这里的 OFFSET 套路搬过去，别当成"已经有人处理过了"。
+ */
+export async function reorderLists(
+  tripId: string,
+  orderedIds: string[]
+): Promise<void> {
+  if (orderedIds.length === 0) return;
+  const db = getDb();
+
+  await db
+    .update(lists)
+    .set({ position: sql`${lists.position} + ${LIST_POSITION_OFFSET}` })
+    .where(eq(lists.tripId, tripId));
+
+  await Promise.all(
+    orderedIds.map((id, index) =>
+      db
+        .update(lists)
+        .set({ position: index })
+        .where(and(eq(lists.id, id), eq(lists.tripId, tripId)))
+    )
+  );
+}
+
 /* ============================================================
  * Undo / Redo：整体快照同步（只同步这一张表自己的东西）
  * ============================================================ */

@@ -41,7 +41,7 @@ export default function BudgetCard({ budget, budgetCurrency, tripId }: BudgetCar
             {/* 总金额 */}
             <div>
               <p className="text-sm text-gray-500 mb-1">当前总额</p>
-              <p className="text-3xl font-bold text-gray-900">
+              <p className="text-4xl font-bold text-gray-900">
                 {formatCurrency(totalSpent, currency)}
               </p>
             </div>

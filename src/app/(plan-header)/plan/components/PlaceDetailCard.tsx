@@ -37,13 +37,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
-import ImagePickerDialog from "@/components/ImagePickerDialog";
+import ImagePickerDialog, {
+  MAX_LOCAL_IMAGE_BYTES,
+} from "@/components/ImagePickerDialog";
 import type { PlaceContainer, PlaceItem } from "@/types/place";
 import { usePlaces } from "@/context/places-context";
 import { useHistory } from "@/context/history-context";
 import { usePlaceFacts, type PlaceFacts } from "@/hooks/usePlaceFacts";
 import { callAi, readAiConfig } from "@/lib/ai-providers";
-import { getColorByListId } from "@/lib/colors";
 import VisitedButton, { visitedToggleFeedback } from "./VisitedButton";
 import PlaceKindBadge from "./PlaceKindBadge";
 import { cn } from "@/lib/utils";
@@ -110,6 +111,8 @@ function DetailBody({
     containerOf,
     itemNumber,
     itemColor,
+    listColor,
+    dayColor,
     containerTitle,
     selectItem,
     clearSelection,
@@ -181,14 +184,14 @@ function DetailBody({
     ...placeLists.map((l) => ({
       key: `list:${l.id}`,
       label: l.title,
-      color: getColorByListId(l.id),
+      color: listColor(l.id),
       container: { kind: "list", listId: l.id } as PlaceContainer,
       present: myPeers.some((p) => p.listId === l.id),
     })),
     ...days.map((d) => ({
       key: `day:${d.dayDate}`,
       label: `Day ${d.dayNumber} · ${d.label}`,
-      color: getColorByListId(`day-${d.dayDate}`),
+      color: dayColor(d.dayDate),
       container: { kind: "day", dayDate: d.dayDate } as PlaceContainer,
       present: myPeers.some((p) => p.dayDate === d.dayDate),
     })),
@@ -685,7 +688,7 @@ function DetailBody({
         onSelect={handlePhotoSelect}
         searchQuery={cur.name}
         subject="地点图片"
-        maxBytes={1 << 20}
+        maxBytes={MAX_LOCAL_IMAGE_BYTES}
       />
     </div>
   );

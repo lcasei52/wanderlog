@@ -1,20 +1,23 @@
 import { format } from "date-fns";
-import { BedDouble, MapPin, Plane, type LucideIcon } from "lucide-react";
+import { BedDouble, MapPin, Plane, TrainFront, type LucideIcon } from "lucide-react";
 import type { Expense, ExpenseCategory } from "@/types/expense";
-import type { Flight, Hotel, PlaceItem } from "@/db/schema";
+import type { Flight, Hotel, PlaceItem, Train } from "@/db/schema";
 
 /**
  * 「从您的行程中选择」那一行左边那个图标：按**项目类型**来，不是按费用类别。
  *
- * 参照物就是这三态（航班→飞机、地点→定位、住宿→床），而我们本来就有这个信息
- * （PickableItem.linkedItemType 就是 place/flight/hotel 三选一），不用推断。
+ * 参照物就是这四态（航班→飞机、地点→定位、住宿→床、火车→火车），而我们本来就有
+ * 这个信息（PickableItem.linkedItemType 就是 place/flight/hotel/train 四选一），
+ * 不用推断。
  *
  * 为什么不按费用类别：地点在 inferFromPlace 里一律推断成「门票」，清单里两个
  * 不同地点会长得一模一样 —— 图标本来是用来"一眼分辨"的，这样反而帮倒忙。
+ * （火车同理：它是「公共交通」，而公共交通下还有地铁/大巴。）
  */
 export function itemTypeIcon(type: PickableItem["linkedItemType"]): LucideIcon {
   if (type === "flight") return Plane;
   if (type === "hotel") return BedDouble;
+  if (type === "train") return TrainFront;
   return MapPin;
 }
 
@@ -50,14 +53,32 @@ export function inferFromHotel(hotel: Hotel): ExpenseSeed {
   return { name: hotel.name, category: "住宿" };
 }
 
+/**
+ * 火车记成「公共交通」而不是单开一个「火车」类别 —— 那一类的图标本来就是
+ * TrainFront（见 types/expense.ts 的 CATEGORY_ICONS），再分一类只是让下拉更长。
+ * 名字里带上车次，是因为同一天可能坐两趟（`宜昌北-武汉 G1030`）。
+ *
+ * 车次可以还没定（空串），那时退回 `宜昌北站-武汉站 火车`：跟 inferFromFlight 对空
+ * 航班号的写法一致 —— 名字不能光是一段悬空的路线。
+ */
+export function inferFromTrain(train: Train): ExpenseSeed {
+  const route = `${train.fromStation}-${train.toStation}`;
+  return {
+    name: train.trainNumber ? `${route} ${train.trainNumber}` : `${route} 火车`,
+    category: "公共交通",
+  };
+}
+
 export function inferFromPlace(item: PlaceItem): ExpenseSeed {
   if (item.sourceKind === "flight") return { name: item.name, category: "航班" };
   if (item.sourceKind === "hotel") return { name: item.name, category: "住宿" };
+  // 火车自动挂出来的车站卡：它是"坐这趟车的开销"，不是车站门票
+  if (item.sourceKind === "train") return { name: item.name, category: "公共交通" };
   return { name: item.name, category: "门票" };
 }
 
 /**
- * 「选择项目」里可选的一项：行程里的地点 / 航班 / 住宿，统一成这个形状，
+ * 「选择项目」里可选的一项：行程里的地点 / 航班 / 住宿 / 火车，统一成这个形状，
  * 列表和搜索框都只认它。选中后既带出费用名和类别，也记下关联（linkedItemType/Id）。
  */
 export interface PickableItem {
@@ -75,14 +96,20 @@ export interface PickableItem {
   origin: string;
   /**
    * 选中后要预填的日期。地点取它所在那天的日子（在清单里的为 null），
-   * 航班取出发日、住宿取入住日。
+   * 航班取出发日、住宿取入住日、火车取**上车站的乘车日**。
    *
    * **这一项是"从预算里选一个项目"和"在项目卡片上点添加费用"两条路唯一的差别。**
    * 卡片那条路会把 dayDate 预填进去（见 PlaceCard 的 prefill），所以费用自动落在
    * 当天；少了它，账能记下但不属于任何一天，在当天列表和日期排序里都看不到。
    */
   date: string | null;
-  linkedItemType: "place" | "flight" | "hotel";
+  /**
+   * 这四个字面量跟 expenses.linked_item_type 一一对应，**加类型时要三处一起改**
+   * （这里是其中一处，另两处见 LinkedExpenseButton 的 LinkedItemType 和
+   * AddExpenseDialog 的 ExpensePrefill）。数据库那一列是裸 text，没有 check 约束，
+   * 漏改一处编译照过、库里也不报错，症状是"选了火车却记不上关联"。
+   */
+  linkedItemType: "place" | "flight" | "hotel" | "train";
   linkedItemId: string;
 }
 

@@ -26,15 +26,27 @@ export default function BudgetSummaryCard({
   const scrollToBudget = () =>
     document.getElementById("budget")?.scrollIntoView({ behavior: "smooth" });
 
+  /*
+   * 纯白卡，跟左边「预订和附件」是同一组（那边写了完整理由，包括"改浅灰试过又改回来"
+   * 那条）。两张卡在这一行里共用同一个行高，留白和底色都必须一起改 —— 只改一张等于没改。
+   *
+   * （这段写在 return 外面而不是写成 JSX 注释：括号里下面只有这一个根元素，
+   *  在它前面多放一个表达式节点就不是"单根"了，tsc 当场报错。）
+   */
   return (
-    <div className="bg-white rounded-lg p-6 shadow-sm h-full">
-      <h3 className="text-lg font-semibold text-gray-900 mb-6">预算</h3>
-      <p className="text-2xl font-semibold text-gray-900">
+    <div className="bg-white rounded-lg px-6 py-4 shadow-sm h-full">
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">预算</h3>
+      <p className="text-xl font-semibold text-gray-900">
         {formatCurrency(totalSpent, currency)}
       </p>
+      {/*
+        蓝色改成灰：这一格里唯一的重点应该是金额，蓝色链接在旁边跟它抢视线。
+        灰的读起来就是"次级入口"，跟卡片里其它灰字（标签、说明）一档。
+        variant 还是 link（下划线 + 内边距归零那套照旧），只换颜色。
+      */}
       <Button
         variant="link"
-        className="text-sm text-blue-600 hover:text-blue-700 p-0 h-auto mt-2"
+        className="text-sm text-gray-500 hover:text-gray-700 p-0 h-auto mt-2"
         onClick={scrollToBudget}
       >
         查看详情

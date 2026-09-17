@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { TripSummary } from "@/types/trip";
-import type { Flight, Hotel, List, PlaceItem, Note, TripMember, Expense } from "@/db/schema";
+import type { Flight, Hotel, Train, Day, List, PlaceItem, Note, TripMember, Expense } from "@/db/schema";
 import type { CachedRoutePlan } from "@/lib/place-route";
 import { TripHistoryProvider } from "@/context/history-context";
 import { NotesProvider } from "@/context/notes-context";
@@ -21,9 +21,12 @@ import AiAssistant from "./AiAssistant";
 interface TripWorkspaceProps {
   /** 来自服务端 page 的可序列化行程快照 */
   trip: TripSummary;
-  /** 该行程已入库的航班 / 住宿（BookingsProvider 初值） */
+  /** 该行程已入库的航班 / 住宿 / 火车（BookingsProvider 初值） */
   flights: Flight[];
   hotels: Hotel[];
+  trains: Train[];
+  /** 该行程的 days 行（PlacesProvider 初值，只用来取每天那个副标题 days.title） */
+  days: Day[];
   /** 该行程的成员和费用（MembersProvider / ExpensesProvider 初值） */
   tripMembers: TripMember[];
   expenses: Expense[];
@@ -36,6 +39,11 @@ interface TripWorkspaceProps {
   routePlans: CachedRoutePlan[];
   /** 地图图层里被关掉的那些（trips.hidden_layers），地图列每次改动都会回写 */
   hiddenLayers: string[];
+  /**
+   * 各地点列表 / 各天的主色（trips.container_colors），键 = 图层键。
+   * 跟 hiddenLayers 同表、同一种"初值"角色，但这一份进撤销快照（见 places-context）。
+   */
+  containerColors: Record<string, string>;
   /** 行程目的地的中心坐标 [lng, lat]（无则不给） */
   destinationCenter?: [number, number];
 }
@@ -56,6 +64,8 @@ export default function TripWorkspace({
   trip,
   flights,
   hotels,
+  trains,
+  days,
   tripMembers,
   expenses,
   placeItems,
@@ -63,6 +73,7 @@ export default function TripWorkspace({
   notes,
   routePlans,
   hiddenLayers,
+  containerColors,
   destinationCenter,
 }: TripWorkspaceProps) {
   // 详情页滚动到哪 → 侧边栏高亮到哪（scrollspy）
@@ -83,10 +94,20 @@ export default function TripWorkspace({
             <PlacesProvider
               tripId={trip.id}
               tripDates={{ startDate: trip.startDate, endDate: trip.endDate }}
-              seeds={{ items: placeItems, placeLists }}
+              seeds={{
+                items: placeItems,
+                placeLists,
+                dayRows: days,
+                containerColors,
+              }}
             >
               <UndoRedoButtons />
-              <BookingsProvider tripId={trip.id} flights={flights} hotels={hotels}>
+              <BookingsProvider
+                tripId={trip.id}
+                flights={flights}
+                hotels={hotels}
+                trains={trains}
+              >
                 {/* 路线缓存/隐藏态/地图画线开关由行程列（间隔那行）与地图列（那些线）共享。
                     城市只给公交查询用（高德的公交必须有城市），拿行程目的地顶上；
                     库里已有的路线（routePlans）作为初值灌进去，重开行程就不用再问高德了。 */}

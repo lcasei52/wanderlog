@@ -138,3 +138,22 @@
     @apply font-sans;
   }
 }
+
+@layer components {
+  /*
+    页面外壳：header 和正文列**必须用同一个壳**。
+    两边的 max-width / 左右内边距只要差一点，头部的 logo 就和正文的左边缘对不齐，
+    整页看着是歪的 —— 这种"两处必须一致"的东西抽成一个类，以后调留白只改这一行。
+
+    为什么不用 Tailwind 的 container：v4 里它的 max-width 跟着断点走，最大的 2xl 是
+    96rem = 1536px，1440 的窗口上根本不起作用，只剩下面那点 px-4（16px）—— 看着就是贴边。
+
+    max-w-6xl = 72rem = 1152px：正文宽度上限。
+    px-6 / sm:px-8 / lg:px-12（24 / 32 / 48px）：窗口越宽，两侧留白越多；
+      1024 附近也不会只剩一条缝。（48px 那个值顺带让 home 卡片两侧的翻页箭头
+      -left-12/-right-12 正好落在留白里，不再探出外壳。）
+  */
+  .app-shell {
+    @apply mx-auto w-full max-w-6xl px-6 sm:px-8 lg:px-12;
+  }
+}

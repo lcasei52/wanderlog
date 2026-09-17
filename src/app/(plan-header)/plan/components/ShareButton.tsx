@@ -14,7 +14,7 @@ export default function ShareButton() {
       className="bg-orange-500 hover:bg-orange-600 text-white rounded-full px-4"
     >
       <Share2 className="h-4 w-4 mr-2" />
-      分享
+      <span className="font-black">分享</span>
     </Button>
   );
 }

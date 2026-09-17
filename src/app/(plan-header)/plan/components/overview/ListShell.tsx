@@ -23,24 +23,28 @@ interface ListShellProps {
   onRename?: (nextTitle: string) => void;
   /** 提供则标题行尾出现「删除」菜单 */
   onDelete?: () => void;
-  /** 标题右侧的计数文案，如 "3 个地点"；无则不显示 */
-  countLabel?: string;
+  /** 提供则标题行尾出现「更换颜色」菜单（点开调色弹窗；只有地点列表给） */
+  onChangeColor?: () => void;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   children?: ReactNode;
 }
 
 /**
- * 概览区各列表（Notes/Flights/Hotels/地点列表）共用的外壳：
- * 折叠箭头 + 可改名标题 + 计数 + 删除菜单 + 内容区。
+ * 概览区各列表（Notes/Flights/Trains/Hotels/地点列表）共用的外壳：
+ * 折叠箭头 + 可改名标题 + 「···」菜单（换颜色 / 删除）+ 内容区。
  * 展开/收起的切换与标题改名都由这里实现，内容由子组件（ListShell 的 children）渲染。
+ *
+ * 「···」按钮的显示条件是"这两个动作至少给了一个" —— 只给 onRename 的那几个
+ * （Notes/Flights/Trains/Hotels）就照旧没有这个按钮，给 onDelete 或 onChangeColor
+ * 的才有。地点列表两个都给。
  */
 export default function ListShell({
   anchorId,
   title,
   onRename,
   onDelete,
-  countLabel,
+  onChangeColor,
   expanded,
   onExpandedChange,
   children,
@@ -102,12 +106,12 @@ export default function ListShell({
                 setDraftTitle(title);
               }
             }}
-            className="flex-1 h-auto text-base font-semibold border-0 border-b-2 border-blue-500 rounded-none px-0 py-0 focus-visible:ring-0"
+            className="flex-1 h-auto text-xl font-semibold border-0 border-b-2 border-blue-500 rounded-none px-0 py-0 focus-visible:ring-0"
             autoFocus
           />
         ) : (
           <h4
-            className="flex-1 text-base font-semibold text-gray-900 truncate"
+            className="flex-1 text-xl font-semibold text-gray-900 truncate"
             onClick={() => onRename && setIsEditingTitle(true)}
             role={onRename ? "button" : undefined}
             title={onRename ? "点击改名" : undefined}
@@ -116,13 +120,8 @@ export default function ListShell({
           </h4>
         )}
 
-        {/* 计数 */}
-        {countLabel && (
-          <span className="text-sm text-gray-500 whitespace-nowrap">{countLabel}</span>
-        )}
-
-        {/* 更多选项菜单（可删除的列表显示） */}
-        {onDelete && !isEditingTitle && (
+        {/* 更多选项菜单（能换色或能删除的列表才显示；正在改名时不显示） */}
+        {(onDelete || onChangeColor) && !isEditingTitle && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-6 w-6">
@@ -130,12 +129,17 @@ export default function ListShell({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                className="text-red-600 focus:text-red-600"
-                onClick={onDelete}
-              >
-                删除列表
-              </DropdownMenuItem>
+              {onChangeColor && (
+                <DropdownMenuItem onClick={onChangeColor}>更换颜色</DropdownMenuItem>
+              )}
+              {onDelete && (
+                <DropdownMenuItem
+                  className="text-red-600 focus:text-red-600"
+                  onClick={onDelete}
+                >
+                  删除列表
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         )}

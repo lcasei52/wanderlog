@@ -9,8 +9,12 @@ import { formatCurrency } from "@/lib/utils";
 import AddExpenseDialog, { type ExpensePrefill } from "./AddExpenseDialog";
 import EditExpenseDialog from "./EditExpenseDialog";
 
-/** 能挂费用的三种行程项目，与 expenses.linked_item_type 对应 */
-type LinkedItemType = "place" | "flight" | "hotel";
+/**
+ * 能挂费用的四种行程项目，与 expenses.linked_item_type 对应。
+ * 加类型时另外两处字面量联合也要改（expense-helpers 的 PickableItem、
+ * AddExpenseDialog 的 ExpensePrefill），漏了编译照过、运行时表现为"选了却记不上"。
+ */
+type LinkedItemType = "place" | "flight" | "hotel" | "train";
 
 interface LinkedExpenseButtonProps {
   linkedItemType: LinkedItemType;

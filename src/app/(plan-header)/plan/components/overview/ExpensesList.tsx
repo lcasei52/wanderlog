@@ -50,7 +50,7 @@ export default function ExpensesList() {
     <div id="expenses-list" className="scroll-mt-4">
       {/* 小标题 + 排序下拉同一行 */}
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="text-lg font-semibold text-gray-900">费用</h3>
+        <h3 className="text-2xl font-semibold text-gray-900">费用</h3>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

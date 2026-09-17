@@ -29,7 +29,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { getColorByListId } from "@/lib/colors";
 import MapLayerSelector from "./MapLayerSelector";
 import PlaceDetailCard from "./PlaceDetailCard";
 
@@ -68,6 +67,8 @@ export default function MapView({
     item,
     itemNumber,
     itemColor,
+    listColor,
+    dayColor,
     dayItemsByDate,
   } = usePlaces();
 
@@ -157,6 +158,12 @@ export default function MapView({
   //  - 之后图层勾选组合变化（开关图层）→ 重新全量框选当前可见 marker；
   //  - 仅 items/选中变化（增删、勾选已访问、切 marker）→ 只重建 marker 不框选，
   //    选中地点的条件聚焦走下面独立的 focusNonce effect。
+  //
+  // ⚠️ itemColor 在依赖数组里是**必须**的（尽管下面那行 eslint-disable 看着像"依赖随便写"）：
+  // 换了某个列表/某天的颜色时 items 和图层可见性的引用都没变，不列它这个 effect 就不会跑，
+  // 于是**图钉留着旧色**、而线那边（routeGaps 依赖 itemColor）立刻换了色 ——
+  // 表现成"线变了、点没变"，看着像坏了。
+  // 它只依赖 containerColors，不影响上面那句 layerKey，所以加进来是纯重画、不会触发 fitAll。
   useEffect(() => {
     if (!map || !updateMarkers) return;
 
@@ -202,7 +209,7 @@ export default function MapView({
       fitAll();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, visibleListIds, visibleDayDates, selectedItemId, map]);
+  }, [items, visibleListIds, visibleDayDates, selectedItemId, map, itemColor]);
 
   // 选中/新增地点：已经落在"看得见"的上半屏 → 不聚焦（emphasized 放大即可）；
   // 否则重新框选（fitAll 会把整体压到上半屏）。
@@ -290,20 +297,40 @@ export default function MapView({
     [showRoutes, routeGaps, plans],
   );
 
-  // 画线/清线的签名（画上去了哪几条）。plans 是整张缓存表，别的间隔陆续查完
-  // 也会让下面这个 effect 重跑 —— 靠它挡掉重画，不然会把视野一次次拉回去。
+  /*
+   * 画线/清线的签名（画上去了哪几条）。plans 是整张缓存表，别的间隔陆续查完
+   * 也会让下面这个 effect 重跑 —— 靠它挡掉重画，不然会把视野一次次拉回去。
+   *
+   * ★ 这里是**两个**签名，不是一个（换容器颜色那件事要求的）：
+   *   画   `key@color`  —— 配色变了得重画线条，不然线还是旧色
+   *   框选 只有 key 集合 —— 只是换了个颜色的话**不该**重新框选，
+   *                        否则点一下色块地图平白跳一下（用户会以为点歪了）
+   * 合成一个的话两件事绑死：要么换色不重画，要么换色就跳。
+   */
   const drawnSigRef = useRef("");
+  const fittedSigRef = useRef("");
   const fitTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!map) return;
-    // 签名带上颜色：图层配色变了也要重画
-    const sig = drawableLines.map((l) => `${l.key}@${l.color}`).join("|");
-    if (sig === drawnSigRef.current) return;
-    drawnSigRef.current = sig;
+    const drawSig = drawableLines.map((l) => `${l.key}@${l.color}`).join("|");
+    const fitSig = drawableLines.map((l) => l.key).join("|");
 
-    setRoutePaths(drawableLines.map((l) => ({ path: l.path, color: l.color })));
-    if (drawableLines.length === 0) return;
+    // 画：路径或颜色变了就重画（setRoutePaths 只动画笔，不碰视野）
+    if (drawSig !== drawnSigRef.current) {
+      drawnSigRef.current = drawSig;
+      setRoutePaths(drawableLines.map((l) => ({ path: l.path, color: l.color })));
+    }
+
+    // 框选：只有"画哪几条线"这件事变了才重框
+    if (fitSig === fittedSigRef.current) return;
+    fittedSigRef.current = fitSig;
+    // 一条线都没有了：上面已经把线清掉，这里连挂着的框选计时器一起作废
+    if (drawableLines.length === 0) {
+      if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
+      fitTimerRef.current = null;
+      return;
+    }
 
     // 一批查询是陆续回来的，签名会连续变好几次；攒一下再框选，
     // 否则视野会随着每条线到达被反复重置（拖开地图时很烦）。
@@ -373,6 +400,8 @@ export default function MapView({
         onDeselectAll={handleDeselectAll}
         showRoutes={showRoutes}
         onToggleRoutes={() => setShowRoutes((v) => !v)}
+        listColor={listColor}
+        dayColor={dayColor}
       />
 
       {/* ---- 底部控件栏 ---- */}
@@ -418,7 +447,7 @@ export default function MapView({
                   >
                     <span
                       className="h-2.5 w-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: getColorByListId(l.id) }}
+                      style={{ backgroundColor: listColor(l.id) }}
                     />
                     <span className="truncate">{l.title}</span>
                   </button>
@@ -438,7 +467,7 @@ export default function MapView({
                   >
                     <span
                       className="h-2.5 w-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: getColorByListId(`day-${d.dayDate}`) }}
+                      style={{ backgroundColor: dayColor(d.dayDate) }}
                     />
                     <span className="truncate">Day {d.dayNumber} · {d.label}</span>
                   </button>

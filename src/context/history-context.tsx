@@ -13,12 +13,15 @@ import {
 import { toast } from "sonner";
 import type { Expense } from "@/types/expense";
 import type { PlaceItem, PlaceListRow } from "@/types/place";
-import type { Flight, Hotel, Note } from "@/db/schema";
+import type { Flight, Hotel, Note, Train } from "@/db/schema";
 import { syncPlacesSnapshot } from "@/actions/places";
+import { syncDayTitlesSnapshot } from "@/actions/days";
 import { syncExpensesSnapshot } from "@/actions/expenses";
 import { syncFlightsSnapshot } from "@/actions/flights";
 import { syncHotelsSnapshot } from "@/actions/hotels";
+import { syncTrainsSnapshot } from "@/actions/trains";
 import { syncNotesSnapshot } from "@/actions/notes";
+import { saveContainerColors } from "@/actions/trips";
 
 /*
  * ============================================================
@@ -69,17 +72,27 @@ import { syncNotesSnapshot } from "@/actions/notes";
  *
  * 进快照（谁动了谁改这里，另外记得同步改 SNAPSHOT_FEATURES / collect / syncAll）
  *   places     addItem / copyItemTo / deleteItem / updateItem / reorderItems
- *              / addPlaceList / renamePlaceList / deletePlaceList
+ *              / addPlaceList / reorderPlaceLists / renamePlaceList / deletePlaceList
+ *              / setDayTitle（写 days.title，也就是 DayCard 里那行副标题）
+ *              / setContainerColor（写 trips.container_colors，列表/某天的主色）
+ *              （后两个都登记在这一片里，但它们**写的都不是 places 这张表**：
+ *                副标题写 days，颜色写 trips。所以 sameSnapshot / syncAll 那两处
+ *                也得跟着改，见它们各自的注释和 TripSnapshot 上那段）
  *   expenses   addExpense / updateExpense / deleteExpense / reorderExpenses
  *   bookings   addFlight / updateFlight / deleteFlight
  *              / addHotel / updateHotel / deleteHotel
- *              / reorderFlights / reorderHotels
+ *              / addTrain / updateTrain / deleteTrain
+ *              / reorderFlights / reorderHotels / reorderTrains
+ *              （三张表装在同一片 bookings 里 —— 所以 sameSnapshot / syncAll
+ *                那两处也得跟着改，见它们各自的注释）
  *   notes      saveContent（失焦保存；内容没变时不提交、也不记快照）
  *
  * 需要包 batch 的组合手势（否则一次点击会留下好几份快照，要按好几下才退回去）
  *   FlightsList.handleAddFlight / handleManualAdd   入库航班 + 挂出发/到达机场地点
  *   HotelsList.handleAddHotel                       入库住宿 + 跨天的一串酒店地点
+ *   TrainsList.handleAddTrain / 手动填写那一条        入库火车 + 挂上车站/下车站两张站点卡
  *   PlacesList.handleGapAdd                         追加 + 重排（"插在这个间隔里"）
+ *   DetailContent.insertListAt                      新增列表 + 整列重排（分隔线上那个 +）
  *   PlaceDetailCard.applyLayer                      取消勾选时循环删掉同 POI 的多份副本
  *
  * 不进快照 —— 有意
@@ -87,12 +100,19 @@ import { syncNotesSnapshot } from "@/actions/notes";
  *   expenses.removeExpensesByLinkedItem  deleteFlight / deleteHotel 里，由那一处 push
  *   members 的增删改                      见下面那条，有后果
  *   routes.ensurePlan / hideGap / showGap 写的是 route_plans 缓存和"哪几行折叠"
- *   纯视图态                              展开/折叠、选中项、弹窗开关、侧栏、显示路线、
- *                                         地图图层开关 —— 不是数据，撤它没有意义
+ *   纯视图态                              展开/折叠（含每个 Day 的收起）、选中项、弹窗开关、
+ *                                         侧栏、显示路线、地图图层开关 —— 不是数据，
+ *                                         撤它没有意义
  *   行程设置（预算/封面/隐藏图层）          弹窗直接调 action，再让服务端那份渲染结果
  *                                         作废掉（预算靠 action 里的 revalidatePath，
  *                                         封面靠调用方的 router.refresh）；封面是
  *                                         base64，50 份内存快照扛不住
+ *                                         ⚠️ 别照"都在 trips 表上"顺推：**同一张表上的
+ *                                         container_colors（列表/某天的主色）是进快照的**
+ *                                         （见上面 places 那条）。判据不是"在哪张表"，
+ *                                         而是"它算不算用户给这份行程做的一处内容决定"：
+ *                                         隐藏图层是看的人的视图偏好、换个账号看就不该跟
+ *                                         着变；颜色是内容本身，改完要能像改名一样撤回来
  *
  * 不进快照 —— 有意，但要知道后果
  *   members   trip_members 是记账的前提而不是行程内容；更硬的理由是 expenses.paid_by
@@ -122,7 +142,9 @@ import { syncNotesSnapshot } from "@/actions/notes";
  *
  * 第 5 步 · 新表就照着 syncFlightsSnapshot 抄（`src/actions/flights.ts`）：查出已存在
  *   的 id → 删掉快照里没有的 → 剩下的**一条多行语句** upsert（`onConflictDoUpdate` +
- *   `sql\`excluded.列\``，别写 createdAt）→ 结尾只调一次 revalidatePath。
+ *   `sql\`excluded.列\``，别写 createdAt）。
+ *   （这里以前还写着"结尾只调一次 revalidatePath"—— 那句已经过期了：客户端手里有完整
+ *   副本，同步函数谁都不要再调它，判据见 actions/trips.ts 的 updateTripBudget 上方。）
  *   跨表的 Promise.all 是安全的（这几张表之间没有外键），但同一张表内部有级联的
  *   （places 的 items+lists）不能拆开，理由写在 syncPlacesSnapshot 上。
  *
@@ -135,9 +157,50 @@ import { syncNotesSnapshot } from "@/actions/notes";
 
 /** 一份快照 = 撤销时"装回去"的完整界面状态，按功能分片 */
 export interface TripSnapshot {
-  places: { items: PlaceItem[]; lists: PlaceListRow[] };
+  /*
+   * ── dayTitles 为什么挂在 places 底下，而不是单开一片 "days" ──
+   * 它只是"按 dayDate 索引的副标题表"（DayCard 里那行灰字），语义上完全可以自开一片。
+   * 没那么做的理由不是"省事"而是"省不掉"：单开一片要新加一个 provider 才登记得上
+   * （useRegisterSnapshot 必须挂在 TripWorkspace 里静态挂载的组件上），而**下面那两处
+   * 手改一处都躲不掉** —— 并进已有的片和单开一片，sameSnapshot / syncAll 一样要改
+   * （理由和 bookings 那片一字不差）。既然只有它一个字段，就直接挂在 places 下面。
+   *
+   * （后来 container_colors —— 列表/某天的主色 —— 也照这条路寄在了这一片里。
+   *   它同样不该自开一片：为它新建一个 provider 的代价跟上面一模一样。）
+   *
+   * 代价：它们跟着 places 的 get/set 一起进快照，所以
+   *   ① sameSnapshot()  漏了某一个，连改两次时第二次 push() 会被静默去重
+   *   ② syncAll()       漏了某一个，撤销只在本地还原、刷新就没了
+   * 两处都见下面各自的注释。
+   */
+  places: {
+    items: PlaceItem[];
+    lists: PlaceListRow[];
+    /** dayDate("yyyy-MM-dd") → 副标题；**没写副标题的那天不占键**（见 buildDayTitles） */
+    dayTitles: Record<string, string>;
+    /*
+     * 图层键（'l:<listId>' / 'd:<dayDate>'）→ hex；**没换过色的容器不占键**
+     * （那份默认色是 getColorByListId 现算的，不进快照）。
+     *
+     * 和 dayTitles 同理，是"寄在 places 底下"的第二个字段（理由见上面那段，
+     * 一样要动 sameSnapshot / syncAll 两处）。
+     *
+     * ⚠️ 两处不同表、别被 sameSnapshot 的引用比较坑到：这一份必须**整份替换**，
+     * 永远不要原地改键（places-context 的 setContainerColor 里写着为什么）。
+     */
+    containerColors: Record<string, string>;
+  };
   expenses: Expense[];
-  bookings: { flights: Flight[]; hotels: Hotel[] };
+  /*
+   * ── 三处手改的其中之一 ──
+   * 火车并进 bookings 这一片（而不是单开一片 "trains"），所以 SNAPSHOT_FEATURES
+   * 不用动、collect()/applySnapshot() 正文也不用提它（bookings 的 get/set 是整体
+   * 类型擦除的）。代价是下面这三处 TS **一处都拦不住**，加字段时只能靠人：
+   *   ① 就是这里（这一处 TS 其实拦得住 —— bookings 的 get/set 有类型）
+   *   ② sameSnapshot()  漏了它，连加两趟火车时第二次 push() 会被静默去重
+   *   ③ syncAll()       漏了它，撤销只在本地还原、刷新就没了
+   */
+  bookings: { flights: Flight[]; hotels: Hotel[]; trains: Train[] };
   notes: Note[];
 }
 
@@ -372,9 +435,27 @@ function sameSnapshot(a: TripSnapshot, b: TripSnapshot): boolean {
   return (
     a.places.items === b.places.items &&
     a.places.lists === b.places.lists &&
+    // ★ 副标题并进 places 这一片，所以这里也要补一行（跟上面 trains 那条一个道理）。
+    // 漏了它的后果：先改周一的副标题、再改周二的，第二次 push() 会按"另外两个字段
+    // 引用都没变"判定为重复、提前返回 —— 于是**按一下撤销两天的副标题一起没**。
+    // dayTitles 每次都是整份替换（{...prev}），所以比引用是可靠的。
+    a.places.dayTitles === b.places.dayTitles &&
+    // ★ 同上，寄在 places 底下的第二个字段。漏了它的后果：连着给两个列表换色，
+    // 第二次 push() 会按"其余字段引用都没变"判定为重复、提前返回 —— 于是
+    // **按一下撤销，两个颜色一起退回去**。
+    //
+    // 比引用在这儿是可靠的，前提是 setContainerColor 里那份永远是整份替换
+    // （{...prev} / 删键）。哪天有人图省事写成 prev[key] = color，引用不变，
+    // 上面这个后果立刻出现 —— 所以那处注释里特意把这条又写了一遍。
+    a.places.containerColors === b.places.containerColors &&
     a.expenses === b.expenses &&
     a.bookings.flights === b.bookings.flights &&
     a.bookings.hotels === b.bookings.hotels &&
+    // ★ 新加了一张装在同一片里的表，就必须在这里补一行。
+    // 漏了它的后果：连加两趟火车时，第二趟那一下 push() 会按"其余字段引用都没变"
+    // 判定为重复、提前返回 —— 于是**按一下撤销两趟一起没**。这是三处手改里最像
+    // 鬼故事的一个，编译和界面都看不出来。
+    a.bookings.trains === b.bookings.trains &&
     a.notes === b.notes
   );
 }
@@ -392,9 +473,29 @@ async function syncAll(tripId: string, snap: TripSnapshot): Promise<void> {
       items: snap.places.items,
       lists: snap.places.lists,
     }),
+    // ★ 副标题写的是 days 表，跟上面那个 places 同步不是同一张表 —— 它俩只是**登记**
+    // 在同一片快照里（理由见 TripSnapshot 上那段），所以这里是两条并发的同步，不是一个。
+    // 漏了它的后果：副标题的撤销在界面上看着成了，但从不写回 Neon，刷新就变回来。
+    syncDayTitlesSnapshot(tripId, snap.places.dayTitles),
+    /*
+     * ★ 容器颜色的写回函数**就是 saveContainerColors 本身** —— 它就是"整份替换
+     * trips.container_colors 这一列"，跟这里要的形状一模一样，不必再包一层
+     * syncXxxSnapshot（那两个 wrapper 存在是因为要删旧行 / 一条多行 upsert）。
+     *
+     * 漏了它的后果：颜色改完撤销，界面上看着回去了，但从不写回 Neon ——
+     * **刷新页面（F5）又变回来**。这是唯一一处能证明"写回"发生过的地方。
+     *
+     * 并发安全：它和 saveHiddenLayers 各写各的列，PG 行锁会串起来（见那个 action 上
+     * 的注释），所以并进这个 Promise.all 不会互相覆盖。
+     */
+    saveContainerColors(tripId, snap.places.containerColors),
     syncExpensesSnapshot(tripId, snap.expenses),
     syncFlightsSnapshot(tripId, snap.bookings.flights),
     syncHotelsSnapshot(tripId, snap.bookings.hotels),
+    // ★ 同上，新表要在这里补一行。漏了它的后果：撤销在界面上看着成了，但从不写回
+    // Neon —— **刷新页面（F5）火车又没了**。这是唯一一处能证明"写回"发生过的地方。
+    // 加进这个 Promise.all 是安全的，理由见上面那段（这几张表之间没有外键）。
+    syncTrainsSnapshot(tripId, snap.bookings.trains),
     syncNotesSnapshot(tripId, snap.notes),
   ]);
 }

@@ -7,6 +7,8 @@ import {
   trips,
   flights,
   hotels,
+  trains,
+  days,
   lists,
   placeItems,
   notes,
@@ -14,6 +16,8 @@ import {
   expenses,
   type Flight,
   type Hotel,
+  type Train,
+  type Day,
   type List,
   type PlaceItem,
   type Note,
@@ -38,7 +42,7 @@ import TripWorkspace from "../components/TripWorkspace";
  * 缓存住，F5 会直接吃到旧的 HTML。force-dynamic 把这条堵死：永远现算。
  * （/home 也是这么写的。）
  *
- * 代价是每次进这个页面都要跑下面那 8 条查询；换来的是"这一页永远反映库里的当前
+ * 代价是每次进这个页面都要跑下面那 10 条查询；换来的是"这一页永远反映库里的当前
  * 状态"这条不用推断的事实。要是哪天嫌 F5 慢，删掉这一行之前先去看 revalidatePath
  * 那条规矩（actions/trips.ts 里 updateTripBudget 上方）。
  */
@@ -112,6 +116,11 @@ const getTripRow = cache(async (tripId: string) => {
         budgetCurrency: trips.budgetCurrency,
         // 地图图层里被关掉的那些（初值，之后由 MapView 自己读写）
         hiddenLayers: trips.hiddenLayers,
+        /*
+         * 各地点列表 / 各天的主色（初值，之后由 PlacesProvider 自己读写）。
+         * 和上面那个同表同层，但它是**进撤销快照**的那一类，见 places-context。
+         */
+        containerColors: trips.containerColors,
       })
       .from(trips)
       .where(eq(trips.id, tripId))
@@ -150,10 +159,10 @@ export default async function TripDetailPage({
    * 顺序上只有一个约束：这批读完成后，才轮到 ensureTripPlaceLists 那个写。
    *
    * 每个读各自套 withRetry（而不是把整个 Promise.all 包一层）：一次连接抖动只
-   * 会挂掉其中一个，包整批会让另外 7 个已经成功的白跑一遍。这也是"偶发进页面
+   * 会挂掉其中一个，包整批会让另外 9 个已经成功的白跑一遍。这也是"偶发进页面
    * 直接跳红字错误界面"的正面修复 —— 以前任何一个读失败，整页就没有了。
    */
-  const [row, flightRows, hotelRows, itemRows, noteRows, fetchedListRows, fetchedMemberRows, expenseRows] =
+  const [row, flightRows, hotelRows, trainRows, dayRows, itemRows, noteRows, fetchedListRows, fetchedMemberRows, expenseRows] =
     await Promise.all([
       getTripRow(tripId),
       // position 是拖拽排序的落库顺序；旧数据 position 全为 0，靠 createdAt 兜底保持原顺序
@@ -170,6 +179,23 @@ export default async function TripDetailPage({
           .from(hotels)
           .where(eq(hotels.tripId, tripId))
           .orderBy(asc(hotels.position), asc(hotels.createdAt)),
+      ),
+      withRetry(() =>
+        db
+          .select()
+          .from(trains)
+          .where(eq(trains.tripId, tripId))
+          .orderBy(asc(trains.position), asc(trains.createdAt)),
+      ),
+      // 只为了 days.title（DayCard 里那行副标题）。其余"第几天/周几/几月几日"
+      // 一律由客户端按行程起止日期现算（places-context 的 buildDays），不从这里来。
+      // 所以这个读**允许行不全**：改过期的行程，新多出来那几天没有行，是正常状态。
+      withRetry(() =>
+        db
+          .select()
+          .from(days)
+          .where(eq(days.tripId, tripId))
+          .orderBy(asc(days.position)),
       ),
       withRetry(() =>
         db
@@ -260,6 +286,8 @@ export default async function TripDetailPage({
       trip={trip}
       flights={flightRows as Flight[]}
       hotels={hotelRows as Hotel[]}
+      trains={trainRows as Train[]}
+      days={dayRows as Day[]}
       tripMembers={memberRows as TripMember[]}
       expenses={expenseRows as Expense[]}
       placeItems={itemRows as PlaceItem[]}
@@ -267,6 +295,7 @@ export default async function TripDetailPage({
       notes={noteRows as Note[]}
       routePlans={routePlanRows}
       hiddenLayers={row.hiddenLayers}
+      containerColors={row.containerColors}
       destinationCenter={
         trip.destination?.location
           ? [trip.destination.location.lng, trip.destination.location.lat]

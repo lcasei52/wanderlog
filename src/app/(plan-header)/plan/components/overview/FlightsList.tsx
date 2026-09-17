@@ -342,9 +342,14 @@ export default function FlightsList() {
             return flight ? <FlightCard flight={flight} /> : null;
           }}
         />
+        {/*
+          mt-2：跟上面最后一张卡拉开 8px。只加上边距，下边距仍是 ListShell 内容区的
+          pb-5 —— 那 20px 是"列表尾部到分隔线"的距离，跟着列表走，不该被这一行改掉。
+          跟 Hotels / Trains 那两个是同一处样式，三处要改一起改。
+        */}
         <Button
           variant="link"
-          className="text-sm text-gray-400 hover:text-gray-600 p-0 h-auto"
+          className="mt-2 text-sm text-gray-400 hover:text-gray-600 p-0 h-auto"
           onClick={openFlightDialog}
         >
           + 添加一个航班

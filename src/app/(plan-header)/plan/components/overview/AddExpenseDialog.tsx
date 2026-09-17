@@ -25,7 +25,7 @@ import ItemPickerDialog from "./ItemPickerDialog";
 
 /**
  * 从卡片快捷入口打开时的预填。linkedItemType/Id 会跟着费用一起入库，
- * 用来知道这笔钱是从哪个航班/住宿/地点记的。
+ * 用来知道这笔钱是从哪个航班/住宿/火车/地点记的。
  */
 export interface ExpensePrefill {
   name?: string;
@@ -33,7 +33,8 @@ export interface ExpensePrefill {
   category?: ExpenseCategory;
   date?: string;
   paidBy?: string;
-  linkedItemType?: "place" | "flight" | "hotel" | null;
+  /** 同 PickableItem.linkedItemType / LinkedExpenseButton 的 LinkedItemType，改要三处一起改 */
+  linkedItemType?: "place" | "flight" | "hotel" | "train" | null;
   linkedItemId?: string | null;
 }
 

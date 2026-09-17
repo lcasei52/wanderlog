@@ -10,7 +10,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { Flight, Hotel, NewFlight, NewHotel } from "@/db/schema";
+import type {
+  Flight,
+  Hotel,
+  NewFlight,
+  NewHotel,
+  NewTrain,
+  Train,
+} from "@/db/schema";
 import { useHistory, useRegisterSnapshot } from "@/context/history-context";
 import { usePlaces } from "@/context/places-context";
 import { useExpenses } from "@/context/expenses-context";
@@ -28,6 +35,13 @@ import {
   updateHotelById,
   type HotelPatch,
 } from "@/actions/hotels";
+import {
+  createTrain,
+  deleteTrainById,
+  reorderTrains as reorderTrainsAction,
+  updateTrainById,
+  type TrainPatch,
+} from "@/actions/trains";
 
 /**
  * 按给定 id 顺序重排数组，并把新下标**写回每行的 position**。
@@ -53,16 +67,33 @@ function reorderRows<T extends { id: string; position: number }>(
     );
 }
 
-export type BookingVariant = "flights" | "hotels";
+export type BookingVariant = "flights" | "hotels" | "trains";
 
 interface BookingsContextValue {
   tripId: string;
   flights: Flight[];
   hotels: Hotel[];
-  /** 概览区 Flights/Hotels 两节的展开态（BookingCard 与列表共用） */
+  trains: Train[];
+  /** 概览区 Flights/Hotels/Trains 几节的展开态（BookingCard 与列表共用） */
   expanded: Record<BookingVariant, boolean>;
   setExpanded: (variant: BookingVariant, value: boolean) => void;
   toggleExpanded: (variant: BookingVariant) => void;
+  /**
+   * 「请求打开某一节的添加弹窗」。
+   *
+   * 存在的理由：弹窗住在 TrainsList 里，而触发它的按钮在**兄弟组件** BookingCard 上，
+   * 两者没有父子关系。抬 state 不如抬 intent —— 跟 expanded/setExpanded 是同一个理由
+   * （那对也是为了让这两个组件共用展开态才放这儿的）。
+   *
+   * 目前只有 trains 会用到：航班/住宿列表一直都在（列表自带「+ 添加」链接），
+   * 而火车列表要等真有火车卡才产生，所以「一趟都没有」时按钮只能直接开弹窗。
+   *
+   * 消费方（TrainsList）读完必须立刻 clearAddIntent()，否则它会一直挂着，
+   * 下次挂载又弹一次。
+   */
+  addIntent: BookingVariant | null;
+  requestAdd: (variant: BookingVariant) => void;
+  clearAddIntent: () => void;
   addFlight: (data: Omit<NewFlight, "tripId">) => Promise<Flight | null>;
   /** 改航班卡展开后表单里的字段；返回更新后的整行，失败/未命中返回 null */
   updateFlight: (id: string, patch: FlightPatch) => Promise<Flight | null>;
@@ -71,46 +102,75 @@ interface BookingsContextValue {
   /** 改住宿卡展开后表单里的字段；返回更新后的整行，失败/未命中返回 null */
   updateHotel: (id: string, patch: HotelPatch) => Promise<Hotel | null>;
   deleteHotel: (id: string) => Promise<void>;
+  addTrain: (data: Omit<NewTrain, "tripId">) => Promise<Train | null>;
+  /** 改火车卡展开后表单里的字段；返回更新后的整行，失败/未命中返回 null */
+  updateTrain: (id: string, patch: TrainPatch) => Promise<Train | null>;
+  deleteTrain: (id: string) => Promise<void>;
   /** 拖拽排序：传入列表的完整 id 顺序，本地先重排再落库 */
   reorderFlights: (orderedIds: string[]) => Promise<void>;
   reorderHotels: (orderedIds: string[]) => Promise<void>;
+  reorderTrains: (orderedIds: string[]) => Promise<void>;
 }
 
 const BookingsContext = createContext<BookingsContextValue | null>(null);
 
 /*
- * 航班/住宿进撤销栈，快照里那一片叫 "bookings"（两张表装在一起）。
+ * 航班/住宿/火车进撤销栈，快照里那一片叫 "bookings"（三张表装在一起）。
  *
- * ★ 删航班/删住宿是这里最要紧的一处：它们会级联删掉自动生成的机场/酒店地点和记在
- * 上面费用。以前那两样在快照里、航班不在，撤销时航班没回来、它的后果却回来了。
- * 所以现在**连带清理也收进 deleteFlight/deleteHotel 里**（不再由 FlightsList /
- * HotelsList 各调一次）—— 一个动作的后果集中在一处，撤销栈才不会漏记一半。
+ * ★ 删航班/删住宿/删火车是这里最要紧的一处：它们会级联删掉自动生成的机场/酒店/车站
+ * 地点和记在上面费用。以前那两样在快照里、航班不在，撤销时航班没回来、它的后果却
+ * 回来了。所以现在**连带清理也收进 deleteFlight/deleteHotel/deleteTrain 里**（不再由
+ * 各 List 自己调一次）—— 一个动作的后果集中在一处，撤销栈才不会漏记一半。
+ *
+ * ⚠️ 火车并进这一片（而不是单开一片 "trains"）有个代价：TripSnapshot 整体类型擦除，
+ * 所以 history-context 里 sameSnapshot / syncAll 两处**必须手改**，TS 一处都不会报。
+ * 那两处的注释写明了漏掉会怎样。
  */
 export function BookingsProvider({
   tripId,
   flights: seedFlights,
   hotels: seedHotels,
+  trains: seedTrains,
   children,
 }: {
   tripId: string;
   flights: Flight[];
   hotels: Hotel[];
+  trains: Train[];
   children: ReactNode;
 }) {
   const [flights, setFlights] = useState<Flight[]>(seedFlights);
   const [hotels, setHotels] = useState<Hotel[]>(seedHotels);
+  const [trains, setTrains] = useState<Train[]>(seedTrains);
+  const [addIntent, setAddIntent] = useState<BookingVariant | null>(null);
+  /*
+   * ★ trains 的展开态初值给 false —— 跟航班/住宿的 true 不一样，是有意的。
+   *
+   * TrainsList 在**空列表时整个不渲染**（用户要的"等真有火车卡了才产生"），这个是前提。
+   * 于是初值给 true 会出现一个说不过去的画面：这趟行程一趟火车都没有，`list-trains`
+   * 根本不在 DOM 里，而 BookingCard 那个磁贴的橙色是按 `expanded` 点亮的 ——
+   * 于是「火车」两个字亮着橙灯，指着一节并不存在的 section。
+   *
+   * 给 false 之后，"展开"这件事只由两种明确的原因发生：用户点了磁贴（openSection 里
+   * 先 setExpanded(variant,true) 再滚），或者刚添加成功（TrainsList 里那一步）。
+   * 代价是：一趟**库里已经有火车**的行程，首屏这一节是收起的，得点一下才看得到 ——
+   * 这跟航班/住宿不一致，是上面那条空态规则的必然结果（它们的空态是个空壳，
+   * 火车的空态是"不存在"）。
+   */
   const [expanded, setExpandedState] = useState<Record<BookingVariant, boolean>>({
     flights: true,
     hotels: true,
+    trains: false,
   });
 
   const { push } = useHistory();
   useRegisterSnapshot(
     "bookings",
-    () => ({ flights, hotels }),
+    () => ({ flights, hotels, trains }),
     (slice) => {
       setFlights(slice.flights);
       setHotels(slice.hotels);
+      setTrains(slice.trains);
     },
   );
 
@@ -140,9 +200,16 @@ export function BookingsProvider({
     [],
   );
 
+  // 抬 intent 而不是抬弹窗 state：弹窗住在 TrainsList 里，按钮在兄弟 BookingCard 上
+  const requestAdd = useCallback(
+    (variant: BookingVariant) => setAddIntent(variant),
+    [],
+  );
+  const clearAddIntent = useCallback(() => setAddIntent(null), []);
+
   /*
    * 下面这些 mutator 一律**先 push 再动手**（见 history-context 顶部规矩三）。
-   * 新增航班/住宿还会连带挂出机场/酒店地点，那几步由调用方包在 batch() 里，
+   * 新增航班/住宿/火车还会连带挂出机场/酒店/车站地点，那几步由调用方包在 batch() 里，
    * 所以一次"加航班"只留下一份快照（这里是那一份，因为它是批次里的第一个 push）。
    */
   const addFlight = useCallback(
@@ -234,6 +301,50 @@ export function BookingsProvider({
     }
   }, [push]);
 
+  const addTrain = useCallback(
+    async (data: Omit<NewTrain, "tripId">) => {
+      push();
+      try {
+        const row = await createTrain(tripId, data);
+        setTrains((prev) => [...prev, row]);
+        return row;
+      } catch (err) {
+        console.error("新增火车失败:", err);
+        return null;
+      }
+    },
+    [tripId, push],
+  );
+
+  const updateTrain = useCallback(
+    async (id: string, patch: TrainPatch) => {
+      push();
+      try {
+        const row = await updateTrainById(id, patch);
+        if (!row) return null;
+        setTrains((prev) => prev.map((t) => (t.id === id ? row : t)));
+        return row;
+      } catch (err) {
+        console.error("更新火车失败:", err);
+        return null;
+      }
+    },
+    [push],
+  );
+
+  const deleteTrain = useCallback(async (id: string) => {
+    push();
+    try {
+      await deleteTrainById(id);
+      setTrains((prev) => prev.filter((t) => t.id !== id));
+      // 同 deleteFlight：站点地点（上车站/下车站各一张）与费用的本地清理收在这里
+      cleanupRef.current.removeItemsBySource("train", id);
+      cleanupRef.current.removeExpensesByLinkedItem("train", id);
+    } catch (err) {
+      console.error("删除火车失败:", err);
+    }
+  }, [push]);
+
   const reorderFlights = useCallback(
     async (orderedIds: string[]) => {
       push();
@@ -260,38 +371,67 @@ export function BookingsProvider({
     [tripId, push],
   );
 
+  const reorderTrains = useCallback(
+    async (orderedIds: string[]) => {
+      push();
+      setTrains((prev) => reorderRows(prev, orderedIds));
+      try {
+        await reorderTrainsAction(tripId, orderedIds);
+      } catch (err) {
+        console.error("火车排序失败:", err);
+      }
+    },
+    [tripId, push],
+  );
+
   const value = useMemo<BookingsContextValue>(
     () => ({
       tripId,
       flights,
       hotels,
+      trains,
       expanded,
       setExpanded,
       toggleExpanded,
+      addIntent,
+      requestAdd,
+      clearAddIntent,
       addFlight,
       updateFlight,
       deleteFlight,
       addHotel,
       updateHotel,
       deleteHotel,
+      addTrain,
+      updateTrain,
+      deleteTrain,
       reorderFlights,
       reorderHotels,
+      reorderTrains,
     }),
     [
       tripId,
       flights,
       hotels,
+      trains,
       expanded,
       setExpanded,
       toggleExpanded,
+      addIntent,
+      requestAdd,
+      clearAddIntent,
       addFlight,
       updateFlight,
       deleteFlight,
       addHotel,
       updateHotel,
       deleteHotel,
+      addTrain,
+      updateTrain,
+      deleteTrain,
       reorderFlights,
       reorderHotels,
+      reorderTrains,
     ],
   );
 

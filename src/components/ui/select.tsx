@@ -50,7 +50,33 @@ function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDownIcon className="pointer-events-none size-4 text-muted-foreground" />
+        {/*
+          实心下三角。**手写 svg，不用 lucide 的 Triangle** —— 那个是等边三角形
+          （三边一样长），看着又高又尖；这里要的是"上边长、高短"的扁三角（12 × 6，
+          正好 2:1），lucide 里没有这个形状的图标。
+
+          viewBox 就是 12×6，所以下面那些数字是"像素"：
+          - 路径内缩 1 再描 2 宽的圆角边 → 外沿正好落在 0..12 / 0..6，
+            顶点被磨成半径 1 的圆角。不内缩的话描边会溢出 viewBox 被裁掉。
+          - 颜色只由外层的 text-* 决定（这里是 text-muted-foreground，浅灰）：
+            svg 上的 fill-current 让 path 继承 currentColor，而描边不吃 fill，
+            所以 path 要自己写 stroke="currentColor"。
+          - size-3 是为了**躲开**触发器的 `[&_svg:not([class*='size-'])]:size-4`：
+            类名里带 size- 才不被它按 16×16 撑开。盒子 12×12、图形 12×6，
+            viewBox 默认 xMidYMid 会让扁三角在盒子里垂直居中，正好对上文字中线。
+        */}
+        <svg
+          viewBox="0 0 12 6"
+          aria-hidden="true"
+          className="size-3 fill-current text-muted-foreground"
+        >
+          <path
+            d="M1 1h10L6 5z"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinejoin="round"
+          />
+        </svg>
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )

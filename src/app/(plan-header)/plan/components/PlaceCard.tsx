@@ -2,12 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  ChevronRight,
-  Clock,
-  Link as LinkIcon,
-  Paperclip,
-} from "lucide-react";
+import { Clock, Link as LinkIcon, Paperclip } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -40,7 +35,8 @@ export default function PlaceCard({ item }: { item: PlaceItem }) {
  * 收起态 = 灰底圆角框 + 最左容器色 mini marker（序号与地图一致）+ 名称/详情/备注；
  * 点击展开就地编辑（笔记/时间/附件/费用占位），同时保持原有动作：地图聚焦 + 打开 PlaceDetailCard；
  * 展开后点卡片外部自动收起。时间/附件弹层用 Portal 渲染到 body，避免被外层容器裁切。
- * 拖动排序 / 删除由外层 SortableCardGroup 提供（手柄与垃圾桶浮在卡片外面的左右两侧）。
+ * 拖动排序 / 删除由外层 SortableCardGroup 提供：垃圾桶浮在卡片右沿外面，拖动柄在
+ * 卡片**里面**（handleSide="right" —— 左沿被图钉占着，见下）。
  */
 function PlaceCardBody({ item }: { item: PlaceItem }) {
   const { selectItem, itemNumber, itemColor, updateItem } = usePlaces();
@@ -139,7 +135,15 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
         expanded ? "" : "hover:bg-gray-50 cursor-pointer",
       )}
     >
-      {/* 收起/展开 头部行 */}
+      {/*
+        收起/展开 头部行。
+        pr-6 是给拖动柄留的：柄浮在卡片里面、垂直居中（SortableCardGroup 的
+        handleSide="right"），**收起态下整张卡就是这一行**，居中正好落在行尾，
+        不留就会盖住那个金额小标。（展开态下柄会落到卡片中间，但那时金额小标本来
+        就不显示了。）
+        收起来的那个右三角箭头（原来在这一行最右）已经去掉 —— 它跟柄是同一个位置，
+        而且展开与否看内容就知道，不必再要一个箭头。
+      */}
       <div
         role="button"
         tabIndex={0}
@@ -150,32 +154,48 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
             handleRowClick();
           }
         }}
-        className="flex items-start gap-2 cursor-pointer group"
+        className="flex items-start gap-2 cursor-pointer group pr-6"
       >
-        {/* mini marker：手动地点 = 容器色 + 序号；机场/酒店 = 淡色底 + 图标（与地图一致） */}
+        {/*
+          图钉：手动地点 = 容器色 + 序号；机场/酒店/车站 = 来源色 + 图标（与地图一致）。
+
+          -ml-6 是这张图上唯一讲究的地方：卡片 px-3，内容从 12px 起，再往左 24px 正好
+          让这个 24px 宽的图钉**中心落在卡片左沿上** —— 一半在卡里、一半在卡外，像钉在
+          卡片边上。它不是绝对定位，仍是这一行 flex 里的一项，所以戳出去的那半照样是
+          卡片的一部分：点它一样能展开这张卡，点外面收起时它也还算"卡内"。
+          （PlaceDayGap 那条点线的位置就照着这个中心来，动它要一起动。）
+
+          -mt-0.5 把水滴头抬到跟第一行标题同一条中线上（外框 py-2 = 8px，再往上 2px）。
+        */}
         <PlaceKindBadge
           item={item}
           number={number}
           color={containerColor}
-          className="mt-0.5"
+          variant="pin"
+          className="-ml-6 -mt-0.5"
         />
 
+        {/*
+          字号比别处大一号（名称 text-base、下面两行 text-sm）：这张卡在行程里是
+          正文，一屏就那么几张，看得清比塞得下要紧。（酒店那行小字没跟着放 ——
+          它是住宿行的投影，本来就不该抢眼。）
+        */}
         <div className="flex-1 min-w-0">
           <p
             className={cn(
-              "text-sm text-gray-800 leading-snug truncate",
+              "text-base text-gray-800 leading-snug truncate",
               visited && "line-through decoration-gray-300",
             )}
           >
             {item.name}
           </p>
           {noteText && (
-            <p className="text-xs text-gray-500 leading-snug line-clamp-2 wrap-break-word whitespace-pre-wrap">
+            <p className="text-sm text-gray-500 leading-snug line-clamp-2 wrap-break-word whitespace-pre-wrap">
               {noteText}
             </p>
           )}
           {(detailLine || timeText || item.url) && (
-            <p className="text-xs text-gray-400 truncate">
+            <p className="text-sm text-gray-400 truncate">
               {[detailLine, timeText, item.url].filter(Boolean).join(" · ")}
             </p>
           )}
@@ -193,19 +213,12 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
             {formatCurrency(linkedExpense.amount, linkedExpense.currency)}
           </span>
         )}
-
-        {/* 展开箭头 */}
-        <ChevronRight
-          className={cn(
-            "h-4 w-4 mt-0.5 text-gray-300 shrink-0 transition-transform",
-            expanded && "rotate-90",
-          )}
-        />
       </div>
 
-      {/* 展开：就地编辑 */}
+      {/* 展开：就地编辑（pl-5 = 20px，跟上面的名称左沿对齐 —— 图钉挪到卡片边上之后，
+          标题那一行是从 20px 起的） */}
       {expanded && (
-        <div className="mt-2 pl-7 space-y-2">
+        <div className="mt-2 pl-5 space-y-2">
           <Textarea
             value={note}
             rows={2}

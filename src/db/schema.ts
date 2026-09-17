@@ -34,6 +34,22 @@ export const trips = pgTable("trips", {
   // 存"关掉的"而不是"打开的"：新加的列表 / 新增的一天天然是打开的，
   // 不用在每次建列表、改行程日期时回来补一行。
   hiddenLayers: jsonb("hidden_layers").$type<string[]>().notNull().default([]),
+  // 各地点列表 / 各天的主色：键 = 图层键（'l:<listId>' / 'd:<dayDate>'，见 types/place
+  // 的 listLayerKey / dayLayerKey），值 = hex。
+  //
+  // **表里没有这个键 = 用 getColorByListId 哈希出的默认色**（见 lib/colors），跟上面
+  // hiddenLayers「没记在里面就是可见」是同一个方向：新建的列表、新增的一天都不用回来补行。
+  //
+  // 为什么不上 lists.color / days.color 两个真列：days 的行**按设计就可能缺**
+  // （见上面 days 那段：改过行程日期之后新多出来那几天就没有行），颜色挂上去就得为一个
+  // 纯展示字段先补一行；而 hiddenLayers 已经证明了"trips 上一个 jsonb + 图层键"这条路。
+  //
+  // ⚠️ 它**进撤销快照**（挂在 places 那一片里），跟同在这张表上的 hiddenLayers / 预算
+  // / 封面不一样 —— 理由写在 history-context 顶部那段契约的"不进快照"清单上。
+  containerColors: jsonb("container_colors")
+    .$type<Record<string, string>>()
+    .notNull()
+    .default({}),
   coverImageUrl: text("cover_image_url"), // 网络图片 URL（Unsplash 等）
   coverImageData: text("cover_image_data"), // 本地图片 base64 data URI
   // 预算设置（可选）
@@ -74,7 +90,10 @@ export type NewList = typeof lists.$inferInsert;
 
 /* ============================================================
  * days —— 行程的每一天
- * 创建行程时按 startDate~endDate 生成；改期时增删。
+ * 创建行程时按 startDate~endDate 生成。**改期时不会自动增删**，所以"行不全"
+ * 是正常状态：行程日期改过之后，新多出来那几天就没有行。读的一方按日期取值、
+ * 取不到就当没有（places-context 的 buildDays）；写的一方缺行就补一行
+ * （actions/days.ts 的 updateDayTitle）。
  * position 与 date 都在行程内唯一，由数据库兜底。
  * ============================================================ */
 export const days = pgTable(
@@ -86,7 +105,7 @@ export const days = pgTable(
       .references(() => trips.id, { onDelete: "cascade" }),
     date: date("date").notNull(), // "YYYY-MM-DD"
     position: integer("position").notNull().default(0), // Day 1 = 0
-    title: text("title"), // 可选，如"自由日"
+    title: text("title"), // 这一天的副标题，DayCard 里那行灰字（如"环球影城日"）；null = 没写
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => [
@@ -161,8 +180,8 @@ export type PlaceItem = typeof placeItems.$inferSelect;
 export type NewPlaceItem = typeof placeItems.$inferInsert;
 
 /* ============================================================
- * flights / hotels / notes —— 各自独立的「一种 section」
- * 每个行程各有一套（当前产品形态：每 trip 一个航班/酒店/笔记
+ * flights / hotels / trains / notes —— 各自独立的「一种 section」
+ * 每个行程各有一套（当前产品形态：每 trip 一个航班/酒店/火车/笔记
  * 集合）。直接 tripId 归属，不再有 list_id——"Flights 这个列表"
  * 就等于这张表里该 trip 的全部行。position 控制表内顺序。
  * ============================================================ */
@@ -212,6 +231,49 @@ export const hotels = pgTable("hotels", {
 
 export type Hotel = typeof hotels.$inferSelect;
 export type NewHotel = typeof hotels.$inferInsert;
+
+/* ------------------------------------------------------------
+ * trains —— 火车
+ *
+ * 与 flights 只有三处刻意的不同，都不是笔误：
+ *
+ * 1. **列名不照抄。** flights 里 `from` 存城市、`fromCity` 存的是**机场名**，
+ *    列名在撒谎。这里让 from_city / to_city 名副其实（存城市），站名另起
+ *    from_station / to_station。保留 from/to 前缀是为了跟全库的对称写法和
+ *    grep 习惯对齐；好处是照抄航班那套逻辑会当场报错，而不是悄悄把机场名
+ *    写进城市列。
+ * 2. **没有 arrival_lng / arrival_lat。** 那两列在 flights 里只是把 API 查回的
+ *    坐标捎给「到达机场」那张地点卡；火车的坐标来自高德站点联想，创建那一刻
+ *    手里就有，抄过来会变成写一次、再也没有读取方。
+ * 3. **时刻一律北京时间，全链路不做 +8 换算** —— 跟 flights 那边正好相反
+ *    （AviationStack 回的是 UTC，客户端要 +8）。12306 只服务国内。
+ *
+ * 只关心四样东西：上车站、下车站、两个时刻、车次。**经停站一概不存** —— 用户
+ * 明确不关心中间停了哪，所以也没有 fromStopIndex / toStopIndex 这类列。
+ * ------------------------------------------------------------ */
+export const trains = pgTable("trains", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tripId: text("trip_id")
+    .notNull()
+    .references(() => trips.id, { onDelete: "cascade" }),
+  // 车次，如 "G1030"。**可以还没定** —— 用户常常先记下"这天坐火车去"、车次之后再补，
+  // 那时落的是空串。跟 departure_time 同一个套路：notNull 的文本列拿 "" 当"还没填"，
+  // 不为一个"待定"状态另开一列可空（那会让全链路多出一层 null 判断，收益为零）
+  trainNumber: text("train_number").notNull(),
+  fromStation: text("from_station").notNull(), // 上车站名
+  fromCity: text("from_city"), // 上车站所在城市；从高德联想里选中的才有，手打的为 null
+  toStation: text("to_station").notNull(), // 下车站名
+  toCity: text("to_city"), // 下车站所在城市；同上
+  date: text("date").notNull(), // "2026-09-20"（**上车站**的乘车日，不是始发站发车日）
+  departureTime: text("departure_time").notNull(), // "HH:mm"（上车站的发车时刻）
+  arrivalDate: text("arrival_date"), // "2026-09-20"（下车站的到达日；跨夜车比 date 大 1~2 天）
+  arrivalTime: text("arrival_time").notNull(), // "HH:mm"（下车站的到达时刻）
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type Train = typeof trains.$inferSelect;
+export type NewTrain = typeof trains.$inferInsert;
 
 export const notes = pgTable("notes", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -330,7 +392,7 @@ export const expenses = pgTable("expenses", {
   // 空数组表示"不分摊"（只有付款人自己承担）
   splitWith: jsonb("split_with").$type<string[]>().notNull().default([]),
   // 关联的行程项目（可选，用于从卡片快捷添加时自动填充）
-  linkedItemType: text("linked_item_type"), // 'flight' | 'hotel' | 'place'
+  linkedItemType: text("linked_item_type"), // 'flight' | 'hotel' | 'train' | 'place'
   linkedItemId: text("linked_item_id"), // 对应表的行 id
   position: integer("position").notNull().default(0), // 列表内排序
   createdAt: timestamp("created_at").notNull().defaultNow(),

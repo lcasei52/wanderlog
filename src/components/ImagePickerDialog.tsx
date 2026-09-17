@@ -15,6 +15,26 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+/*
+ * 本地图的上限，按**解码后的字节数**算（不是 data URI 那一长串字符的长度）。
+ *
+ * 640KB 这个数是被两层夹出来的：
+ *
+ *   1. Next 对 Server Action 的请求体有 1MB 硬上限（默认值，next.config.ts 里没改过）。
+ *      本地图是当 `{ data: dataUrl }` 这个参数发过去的，而 base64 会把字节数抬高
+ *      4/3 —— 所以 640KB 的图到了线上约是 850KB 的请求体，1MB 以内还留着余量给 JSON
+ *      的引号和 tripId。**上限再往上调就会直接撞墙**，症状是 "Body exceeded 1 MB
+ *      limit"，而且是在图都读进内存、用户点了「确认使用」之后才炸。踩过一次。
+ *   2. 这份 base64 是**常驻**在 trips 那一行上的：page.tsx 每次渲染都把它查出来当
+ *      props 发下去（封面还带 priority，直接进 HTML），所以它多大，每次进这个页面、
+ *      每次 F5 就要多传多大 —— 而且是两遍（RSC 里一份、img src 一份）。
+ *
+ * 所以"传不上大图"的正解是**别把图存成 base64**（存文件、库里只留 URL），不是把
+ * bodySizeLimit 调大。真要临时放宽，改 next.config.ts 的
+ * experimental.serverActions.bodySizeLimit，但上面第 2 条的代价照付。
+ */
+export const MAX_LOCAL_IMAGE_BYTES = 640 * 1024;
+
 interface UnsplashImage {
   id: string;
   urls: {
@@ -36,7 +56,10 @@ interface ImagePickerDialogProps {
   searchQuery?: string;
   /** 文案里的宾语，如"行程封面" / "地点图片" */
   subject?: string;
-  /** 本地图上限（字节）。超出会先尝试压缩，压不下去才报错 */
+  /**
+   * 本地图上限（解码后的字节数）。超出会先尝试压缩，压不下去才报错。
+   * 默认 MAX_LOCAL_IMAGE_BYTES —— 别传一个比它大很多的数，理由在那段注释里。
+   */
   maxBytes?: number;
 }
 
@@ -106,7 +129,7 @@ export default function ImagePickerDialog({
   onSelect,
   searchQuery,
   subject = "图片",
-  maxBytes = 2 * 1024 * 1024,
+  maxBytes = MAX_LOCAL_IMAGE_BYTES,
 }: ImagePickerDialogProps) {
   // 网络图片 tab 状态
   const [images, setImages] = useState<UnsplashImage[]>([]);

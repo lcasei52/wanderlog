@@ -1,22 +1,26 @@
+import { Hotel, Plane, TrainFront, type LucideIcon } from "lucide-react";
 import type { PlaceItem } from "@/types/place";
 
 /**
  * 地点卡的"视觉种类"（由 place_items.source_kind 决定）：
  * - `place`  —— 用户手动加的地点：容器色圆形 + 容器内序号（与地图 marker 一致）；
  * - `flight` —— 航班自动挂上的机场：淡蓝底 + 蓝色飞机，**不带数字**；
- * - `hotel`  —— 住宿自动挂上的酒店：淡紫底 + 紫色房子，**不带数字**。
+ * - `hotel`  —— 住宿自动挂上的酒店：淡紫底 + 紫色房子，**不带数字**；
+ * - `train`  —— 火车自动挂上的车站：淡绿底 + 绿色火车，**不带数字**。
  *
- * 自动生成的两类为什么不要数字：它们不是"这天要逛的第几个景点"，序号对它们没有意义
- * （同一酒店一天还会首尾各挂一份）；用图标表明来源，比连号的数字更好认。
+ * 自动生成的几类为什么不要数字：它们不是"这天要逛的第几个景点"，序号对它们没有意义
+ * （同一酒店一天还会首尾各挂一份，一趟火车还会挂两张站卡）；用图标表明来源，比连号的
+ * 数字更好认。
  */
-export type PlaceKind = "place" | "flight" | "hotel";
+export type PlaceKind = "place" | "flight" | "hotel" | "train";
 
-/** 自动生成的两类（带图标）；手动地点单独处理 */
+/** 自动生成的几类（带图标）；手动地点单独处理 */
 export type AutoPlaceKind = Exclude<PlaceKind, "place">;
 
 export function placeKindOf(item: Pick<PlaceItem, "sourceKind">): PlaceKind {
   if (item.sourceKind === "flight") return "flight";
   if (item.sourceKind === "hotel") return "hotel";
+  if (item.sourceKind === "train") return "train";
   return "place";
 }
 
@@ -30,6 +34,22 @@ export const AUTO_PLACE_COLORS: Record<
 > = {
   flight: { bg: "#3B82F6", fg: "#ffffff" }, // blue-500 / white
   hotel: { bg: "#8B5CF6", fg: "#ffffff" }, // violet-500 / white
+  train: { bg: "#10B981", fg: "#ffffff" }, // emerald-500 / white —— 跟蓝/紫都拉得开
+};
+
+/**
+ * 卡片/详情卡上那个图标组件。**用查表，别写三元**：
+ * 以前这里是 `kind === "flight" ? Plane : Hotel`，那么加第三种时 TS 一声不吭，
+ * 界面只是悄悄显示一个错的图标。现在 `Record<AutoPlaceKind, …>` 会把"漏了一种"
+ * 变成编译错误。
+ *
+ * 跟 AUTO_PLACE_ICON_PATHS 是**两份**数据（一份 React 组件、一份路径字符串），
+ * 改图标要两边一起改 —— 下面那段注释解释了为什么不能合成一份。
+ */
+export const AUTO_PLACE_ICONS: Record<AutoPlaceKind, LucideIcon> = {
+  flight: Plane,
+  hotel: Hotel,
+  train: TrainFront,
 };
 
 /**
@@ -47,6 +67,15 @@ export const AUTO_PLACE_ICON_PATHS: Record<AutoPlaceKind, string[]> = {
     "M2 8h18a2 2 0 0 1 2 2v10",
     "M2 17h20",
     "M6 8v9",
+  ],
+  // lucide TrainFront（6 条 path，没有 circle/line/polyline）
+  train: [
+    "M8 3.1V7a4 4 0 0 0 8 0V3.1",
+    "m9 15-1-1",
+    "m15 15 1-1",
+    "M9 19c-2.8 0-5-2.2-5-5v-4a8 8 0 0 1 16 0v4c0 2.8-2.2 5-5 5Z",
+    "m8 19-2 3",
+    "m16 19 2 3",
   ],
 };
 
@@ -66,7 +95,9 @@ export function canDragPlace(item: Pick<PlaceItem, "sourceKind">): boolean {
  * 归父行管：要拿掉它就去改酒店日期或删掉整个住宿。在当天列表里删一张投影没有意义，
  * 下次改酒店日期照样会长回来。
  *
- * 机场（航班生成的）不在此列：它仍是可编辑的卡片，也就仍由用户自己决定留不留。
+ * 机场（航班生成的）和车站（火车生成的）不在此列：它们仍是可编辑的卡片，
+ * 也就仍由用户自己决定留不留 —— 火车那两张站卡尤其如此，改火车卡上的时刻**不会**
+ * 回头动它们（见 actions/trains.ts 的 TrainPatch）。
  */
 export function canDeletePlace(item: Pick<PlaceItem, "sourceKind">): boolean {
   return placeKindOf(item) !== "hotel";
