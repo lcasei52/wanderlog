@@ -22,9 +22,10 @@ interface ListDividerProps {
  * 里，还得压在这条线所在的这一段上）。所以这条线由这个组件自己画，凡是挨着它的地方
  * 就不能再有 `divide-y` —— 两个边框叠在一起是 2px 的双线。
  *
- * + 的位置对着**这一列内容的左沿**（56px = pl-14，也就是 ListShell 内容区和
- * 行程里 DayCard 内容区的那个左沿）：卡片底部那行「+ 新列表」也落在 56px 上，
- * 于是上下两个 + 在同一竖线上。落地方式见下面 left-12 + px-2 那两处的算术。
+ * + 的位置对着**这一列内容的左沿**（lg 以上 56px = pl-14，手机上 12px = px-3，
+ * 也就是 ListShell 内容区和行程里 DayCard 内容区的那个左沿）：卡片底部那行
+ * 「+ 新列表」落在同一个数上，于是上下两个 + 在同一竖线上。
+ * 落地方式见下面 left-1 / left-12 + px-2 那两处的算术。
  *
  * 加号**没有框**（不要圆钮、不要描边）：它平时就是一个粗一点的灰 +，直接坐在线上，
  * 靠自己那一小块白底把线在它两边遮掉 —— 看起来就是"线在这儿让开一个口子"。
@@ -48,7 +49,12 @@ export default function ListDivider({ onAdd }: ListDividerProps) {
           type="button"
           onClick={onAdd}
           aria-label="在此处新增列表"
-          className="absolute left-12 top-1/2 flex -translate-y-1/2 items-center text-gray-500"
+          /*
+            left-1（4px）+ 里面的 pl-2（8px）= 12px，正好是手机上 ListShell 内容区的
+            px-3 —— + 号仍旧落在那一列内容的左沿上。lg 以上回到 left-12（48px）+ 8 = 56px。
+            这跟 ListShell / DetailContent「+ 新列表」是同一套数（见 ListShell 那处注释）。
+          */
+          className="absolute left-2 top-1/2 flex -translate-y-1/2 items-center text-gray-500 lg:left-12"
         >
           {/*
             图标外面这层白底（不是框，是遮线用的）：px-2 让白块比图标两头各宽出 8px，
@@ -72,8 +78,15 @@ export default function ListDivider({ onAdd }: ListDividerProps) {
 
             只浮出来、不变色：加号是这一列的"插入口"，指到哪儿都还是那条灰线的一部分，
             变橙会把一整列的分隔线读成一排按钮。
+
+            触摸上常显（pointer-coarse:opacity-40）：那边 group-hover/divider 是被
+            @media (hover: hover) 包着的，一条都命中不了，这两字永远不出现 —— 单看
+            一个裸 + 是猜不出它是干什么的。按钮本体（上面那个 <button>）本来就常驻可点，
+            所以这里只补"看得懂"，不用碰 pointer-events。
+            底色那点小瑕疵：bg-white 白底在 40% 下挡不严下面那条 bg-gray-100，
+            会隐约透出来一点 —— 很淡，不值得为它换一套实现。
           */}
-          <span className="bg-white pl-2 text-sm whitespace-nowrap opacity-0 transition-opacity group-hover/divider:opacity-100">
+          <span className="bg-white pl-2 text-sm whitespace-nowrap opacity-0 transition-opacity group-hover/divider:opacity-100 pointer-coarse:opacity-40">
             新列表
           </span>
         </button>

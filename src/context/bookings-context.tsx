@@ -144,23 +144,23 @@ export function BookingsProvider({
   const [trains, setTrains] = useState<Train[]>(seedTrains);
   const [addIntent, setAddIntent] = useState<BookingVariant | null>(null);
   /*
-   * ★ trains 的展开态初值给 false —— 跟航班/住宿的 true 不一样，是有意的。
+   * 概览里那几节的展开态。三个都默认展开 —— 这一屏本来就是"一进来先看全局"，
+   * 让用户为了看见已有的内容先点一下是没道理的。
    *
-   * TrainsList 在**空列表时整个不渲染**（用户要的"等真有火车卡了才产生"），这个是前提。
-   * 于是初值给 true 会出现一个说不过去的画面：这趟行程一趟火车都没有，`list-trains`
-   * 根本不在 DOM 里，而 BookingCard 那个磁贴的橙色是按 `expanded` 点亮的 ——
-   * 于是「火车」两个字亮着橙灯，指着一节并不存在的 section。
+   * trains 这里给 true 有前提，改之前先读：
+   *   TrainsList 在**空列表时整节不渲染**（用户要的"等真有火车卡了才产生"），
+   *   所以"没有火车"时 `list-trains` 不在 DOM 里，这个 true 没有任何消费方 ——
+   *   点磁贴走的是 BookingCard 里那条"直接开添加弹窗"的分支，不读它。
+   *   磁贴的橙色也早就改成看**条数**了（见 BookingCard 里那段"别把展开态混进来当判据"），
+   *   所以"亮着橙灯指着一节不存在的 section"那个老问题不会再出现。
    *
-   * 给 false 之后，"展开"这件事只由两种明确的原因发生：用户点了磁贴（openSection 里
-   * 先 setExpanded(variant,true) 再滚），或者刚添加成功（TrainsList 里那一步）。
-   * 代价是：一趟**库里已经有火车**的行程，首屏这一节是收起的，得点一下才看得到 ——
-   * 这跟航班/住宿不一致，是上面那条空态规则的必然结果（它们的空态是个空壳，
-   * 火车的空态是"不存在"）。
+   * ★ 这里以前是 false，理由就是上面那条磁贴的橙色 —— 那个理由已经不成立了，
+   *   留着它反倒表现成"有火车的行程，首屏这一节比航班/住宿少展开一次"。别再改回去。
    */
   const [expanded, setExpandedState] = useState<Record<BookingVariant, boolean>>({
     flights: true,
     hotels: true,
-    trains: false,
+    trains: true,
   });
 
   const { push } = useHistory();

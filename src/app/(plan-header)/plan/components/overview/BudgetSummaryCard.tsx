@@ -29,14 +29,20 @@ export default function BudgetSummaryCard({
   /*
    * 纯白卡，跟左边「预订和附件」是同一组（那边写了完整理由，包括"改浅灰试过又改回来"
    * 那条）。两张卡在这一行里共用同一个行高，留白和底色都必须一起改 —— 只改一张等于没改。
+   * 窄屏横向那一档（px-3）也是两张一起收的，理由同样见那边。
+   *
+   * 金额在窄屏降一档字号（text-xl → text-base）不是因为小气：375px 上这一格只有
+   * 109px 宽，收完内边距留给金额的只有 85px。text-xl 的 "¥1,234.00" 要一百出头，
+   * 直接顶出白卡外面。降到 text-base 刚好放得下五位数，再长就靠 wrap-break-word 折成
+   * 两行（**会折**好过溢出到卡片外面 —— 金额是这里唯一不能省的东西）。
    *
    * （这段写在 return 外面而不是写成 JSX 注释：括号里下面只有这一个根元素，
    *  在它前面多放一个表达式节点就不是"单根"了，tsc 当场报错。）
    */
   return (
-    <div className="bg-white rounded-lg px-6 py-4 shadow-sm h-full">
+    <div className="bg-white rounded-lg px-3 py-4 shadow-sm h-full sm:px-6">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">预算</h3>
-      <p className="text-xl font-semibold text-gray-900">
+      <p className="wrap-break-word text-base font-semibold text-gray-900 sm:text-xl">
         {formatCurrency(totalSpent, currency)}
       </p>
       {/*

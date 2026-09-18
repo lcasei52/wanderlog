@@ -37,6 +37,11 @@ interface MapViewProps {
   destinationCenter?: [number, number];
   /** 首屏读到的"被关掉的图层"（trips.hidden_layers），之后由本组件自己维护并回写 */
   hiddenLayers: string[];
+  /**
+   * 手机端浮层是否已滑出（桌面端恒为 false，那边的地图一直在流里，不需要这个）。
+   * 只用来在"露脸之后"补一次 resize，见下面那个 effect。
+   */
+  mobileOpen?: boolean;
 }
 
 /** 已访问 marker 的固定灰色 */
@@ -55,6 +60,7 @@ const VISITED_SLATE = "#94a3b8";
 export default function MapView({
   destinationCenter,
   hiddenLayers: initialHiddenLayers,
+  mobileOpen = false,
 }: MapViewProps) {
   const {
     tripId,
@@ -91,6 +97,23 @@ export default function MapView({
     zoom: 12,
     center: destinationCenter ?? [116.397428, 39.90923],
   });
+
+  /**
+   * 手机浮层从"藏起来"变成"露出来"之后补一次 resize。
+   *
+   * 为什么 ResizeObserver 兜不住：藏起来用的是 visibility + translate（不是 display:none），
+   * 容器尺寸从头到尾没变，useAMap 里那个 ResizeObserver 一次都不会触发。但高德在
+   * 不可见容器里量到的东西未必可信 —— getSize() 会喂给 fitPoints / isPointVisible /
+   * focusOnPoint（都在 useAMap 里），量错了视野就整体偏掉。
+   *
+   * 320ms = 滑入动画 300ms 之后再补，别在动画中途 resize（那时宽度还在变）。
+   * 桌面端 mobileOpen 恒为 false，这个 effect 不跑；那边的尺寸变化照旧由 ResizeObserver 管。
+   */
+  useEffect(() => {
+    if (!map || !mobileOpen) return;
+    const timer = window.setTimeout(() => map.resize?.(), 320);
+    return () => window.clearTimeout(timer);
+  }, [map, mobileOpen]);
 
   // 图层选择器状态。唯一真相是"**被关掉**的图层键"（l:<id> / d:<date>，见 types/place）：
   // 没记在里面就是可见 —— 所以新建的列表、新增的一天天然是打开的，不需要额外同步一份

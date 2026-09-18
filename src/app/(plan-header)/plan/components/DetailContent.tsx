@@ -263,23 +263,66 @@ export default function DetailContent({
         >
           <ImagePlus className="h-5 w-5" />
         </Button>
-
-        {/* 悬浮卡片 */}
-        <div className="absolute inset-x-0 bottom-0 translate-y-1/2 px-6 z-10">
-          <TripHeaderCard
-            dateRange={dateRange}
-            onDateRangeChange={setDateRange}
-            initialTitle={trip?.name}
-            tripId={trip?.id}
-          />
-        </div>
       </div>
 
-      {/* 内容区域 - 给顶部留出空间 */}
-      <div className="mt-24 px-6 pb-8 space-y-8">
+      {/*
+        标题卡：骑在封面下沿上（一半压着图、一半露在下面）。
+
+        ★ 它是**正常流**里的一块，靠 -mt-19 往上提半个卡高，不再是
+        `absolute bottom-0 translate-y-1/2`。区别就在"流里有没有它"：
+
+        卡高（一行标题）是 24 + 40(标题行高) + 16(mb-4) + 16(Card 的 flex gap)
+        + 32(那一行) + 24 = 152px，一半 76px 正好是 -mt-19。以前它 absolute 跑出
+        封面之外，正常流当它不存在，于是下面那块内容只能靠一个写死的 mt-24 去躲
+        —— 96px 恰好等于"一行标题 76 + 净空 20"，行程名一折行卡就变 192 高、露出去
+        96，一分不差地贴上（用户报的"和上面的卡片挨着了"就是这个）。
+
+        现在卡的高度真的算进页面高度：折几行都只会把下面顶下去，不会压上去。
+
+        ★ 它必须是封面那个 div 的**兄弟**，不能塞进去：封面是写死的 h-64，塞进去
+        的话它是封面里唯一的流内元素、会从封面**顶端**开始排（-mt-19 反倒把它提到
+        封面上面去），而且高度再多也撑不动那个 h-64。
+
+        relative z-10：封面图是 absolute 的，绝对定位的画在正常流之后，不显式抬
+        一下卡片会被图盖住。（-mt-19 是负外边距，卡片自己还看得见。）
+      */}
+      <div className="relative z-10 -mt-19 px-6">
+        <TripHeaderCard
+          dateRange={dateRange}
+          onDateRangeChange={setDateRange}
+          initialTitle={trip?.name}
+          tripId={trip?.id}
+        />
+      </div>
+
+      {/*
+        内容区域 - 顶部那点空档。
+
+        mt-6 只是"标题卡下沿 → 概览那两个卡"之间的净空，**不是**用来躲标题卡的：
+        标题卡已经在正常流里，多高的标题都会把这一整块顶下去（见上面那段）。以前那
+        个 mt-24 才是躲卡的，也正是它被折行的标题吃干净、露出"贴住"的毛病。
+
+        px-2（8px）：手机上这一层是全页最外侧的留白，多留 8px，底下每一层再各留一点，
+        加起来整张卡就离屏边很远了（概览那条链是 页面 8 + ListShell 40 + 卡片 8）。
+        lg 以上回到 px-6 —— 桌面宽度不缺这点，别动。
+      */}
+      <div className="mt-6 px-2 pb-8 space-y-8 lg:px-6">
         {/* 概览 */}
         <section id="overview" className="scroll-mt-4">
-          {/* 顶部两个卡片 */}
+          {/*
+            顶部两个卡片：**任何宽度都是同一行**，2/3 给「预订和附件」、1/3 给预算摘要。
+
+            以前 lg 以下是单列堆叠的（grid-cols-1 lg:grid-cols-3），理由是"列太窄，
+            两张卡的内容会挤"。用户要的还是原来那个结构（一行、一个 2/3 一个 1/3），
+            所以列数固定成 3，两个 span 也不带 lg: 前缀了。
+
+            窄屏的代价落在两张卡自己身上：375px 上 2/3 那格只有 234px、1/3 只有 109px，
+            所以它们在 sm 以下横向各收到 12（px-3）。预订卡里六个图标也因此只能**挤成
+            一行**（窄屏去掉按钮内边距、收紧字距）—— 一折行这张卡就变高，而两张卡共用
+            行高，等于把右边那张一起顶高。
+            ★ 那几处和这里是**一对**：动这一行的比例，就跟着看那两张卡的窄屏尺寸，
+            反过来也一样。
+          */}
           <div className="grid grid-cols-3 gap-4 mb-6">
             <div className="col-span-2">
               <BookingCard />
@@ -331,11 +374,15 @@ export default function DetailContent({
               放在里面它才在卡片里、上面那条线由 ListDivider 画，左沿也能跟各列表的
               内容对齐。
 
-              px-6 pl-14 抄的就是 ListShell 的内容区（那边是同一个数）—— 于是这一行
-              跟行程里 DayCard 的「+ 添加地点」落在同一条竖线上。两处本来就是同一件事
-              （在这儿再加一条），长得也该一样：浅灰字、无内边距，点一下才变深。
+              px 抄的就是 ListShell 的内容区（那边是同一个数，lg 前后各一套）——
+              于是这一行跟行程里 DayCard 的「+ 添加地点」落在同一条竖线上。两处本来就是
+              同一件事（在这儿再加一条），长得也该一样：浅灰字、无内边距，点一下才变深。
+
+              ★ 这是一对数：ListShell 那两处内边距（标题行 px、内容区 px/pl）和这里必须
+              同进同退，改成 px-3 就得三处一起改，否则"新列表"会跟上面各列表的内容错开
+              一条。同一条竖线上还有 ListDivider 的 left-1（12px 处那个 + 号）。
             */}
-            <div className="px-6 pl-14 py-5">
+            <div className="px-3 py-5 lg:px-6 lg:pl-14">
               <Button
                 variant="link"
                 onClick={() => addPlaceList()}
@@ -350,7 +397,7 @@ export default function DetailContent({
         {/* 行程 */}
         <section id="itinerary" className="scroll-mt-4">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-4xl font-bold text-gray-900">行程</h2>
+            <h2 className="text-4xl font-bold text-gray-900 px-2">行程</h2>
             {/* 日期修改按钮 */}
             <Popover>
               <PopoverTrigger asChild>
@@ -409,13 +456,13 @@ export default function DetailContent({
         <section id="budget" className="scroll-mt-4">
           {/* 「预算」标题与「＋ 添加费用」同一行，按钮靠最右 */}
           <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-4xl font-bold text-gray-900">预算</h2>
+            <h2 className="text-4xl font-bold text-gray-900 px-2">预算</h2>
             <Button
               className="rounded-full bg-orange-500 px-5 hover:bg-orange-600"
               onClick={() => setShowAddExpense(true)}
             >
-              <Plus className="size-4" />
-              添加费用
+              <Plus className="size-4 " strokeWidth={3} />
+              <span className="font-semibold">添加费用</span>
             </Button>
           </div>
 

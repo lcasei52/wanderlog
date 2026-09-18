@@ -43,6 +43,17 @@ interface SimpleSidebarProps {
   activeSubId?: string | null;
   /** 点击 AI 助手按钮的回调 */
   onAiClick?: () => void;
+  /**
+   * rail   = 桌面那条长在流里的竖栏（w-48 ⇄ w-12 "拉窗帘"，下面全部既有逻辑都是它的）
+   * drawer = 手机抽屉里那一份（见 MobileSidebar）：同样一份目录，但没有窄轨态，
+   *          宽度交给抽屉外壳定，所以这里只管填满
+   */
+  variant?: "rail" | "drawer";
+  /**
+   * drawer 模式下点底部「隐藏侧边栏」要干什么（那是**关抽屉**，不是收成窄轨）。
+   * rail 模式不用传，走原来的 toggleCollapsed(true)。
+   */
+  onHide?: () => void;
 }
 
 /** 平滑滚到详情页里的某个锚点（block:start，锚点自带 scroll-mt 留白） */
@@ -62,8 +73,16 @@ export default function SimpleSidebar({
   activeSection,
   activeSubId,
   onAiClick,
+  variant = "rail",
+  onHide,
 }: SimpleSidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  /*
+   * 抽屉模式下永远按"展开"渲染 —— 手机没有窄轨那一态（收起 = 抽屉关上，由
+   * MobileSidebar 的 inert / -translate-x-full 负责，跟这里的 isCollapsed 无关）。
+   * 下面的类名、inert、条件渲染全部读这个派生值，于是 rail / drawer 只差一个开关。
+   */
+  const collapsed = variant === "rail" && isCollapsed;
   /*
    * 预算默认也要展开：它那唯一一个子项「查看」是**入口**不是装饰，默认收起就等于
    * 用户根本看不见这个入口（还得先猜到要点那个箭头）。其余两组本来就是展开的。
@@ -190,9 +209,14 @@ export default function SimpleSidebar({
     <TooltipProvider delayDuration={200}>
       <div
         className={cn(
-          "relative h-full shrink-0",
-          "transition-[width] duration-200 ease-out motion-reduce:transition-none",
-          isCollapsed ? "w-12" : "w-48",
+          variant === "rail"
+            ? // 桌面：长在流里的一条竖栏，w-48 ⇄ w-12 靠宽度过渡"拉窗帘"。
+              // max-lg:hidden：小屏走 MobileSidebar 那套抽屉，这条整个不出现
+              // （包括那个 w-12 窄轨 —— 手机上它换成上侧两枚圆钮）
+              "relative h-full shrink-0 max-lg:hidden transition-[width] duration-200 ease-out motion-reduce:transition-none"
+            : // 抽屉里：宽度由抽屉外壳（MobileSidebar）说了算，这里只管填满它
+              "relative h-full w-full",
+          variant === "rail" && (isCollapsed ? "w-12" : "w-48"),
         )}
       >
         <aside className="relative h-full w-full overflow-hidden border-r bg-white">
@@ -206,10 +230,18 @@ export default function SimpleSidebar({
           */}
           <div
             ref={expandedLayerRef}
-            inert={isCollapsed}
+            inert={collapsed}
             className={cn(
-              "absolute inset-y-0 left-0 w-48 flex flex-col transition-opacity duration-200 motion-reduce:transition-none",
-              isCollapsed ? "pointer-events-none opacity-0" : "opacity-100",
+              "absolute inset-y-0 left-0 flex flex-col transition-opacity duration-200 motion-reduce:transition-none",
+              /*
+               * rail 里宽度必须写死 192px：上面"拉窗帘"那段靠的就是"内层固定宽、
+               * 外层裁"，跟着父级走的话内容会每帧重排，就不是滑而是压扁了。
+               * drawer 里反过来必须跟着抽屉走 —— 抽屉在 375px 屏上只有 168px，
+               * 这里还留 w-48 的话右边 24px 会被 <aside> 的 overflow-hidden 切掉
+               * （表现是"周四 · 9月18日"贴着被切断）。
+               */
+              variant === "rail" ? "w-48" : "w-full",
+              collapsed ? "pointer-events-none opacity-0" : "opacity-100",
             )}
           >
             {/*
@@ -219,7 +251,13 @@ export default function SimpleSidebar({
               这里**没有**分隔线：按钮和大标题之间不留横杠（它是浮在侧栏上的一个球，
               不是一节内容，画条线反而像把它框进了目录里）。
             */}
-            <div className="h-18 shrink-0" />
+            {/*
+              drawer 里那颗胶囊是 hidden 的（手机上换成 DetailContent 左上角两枚圆钮），
+              再留 72px 就是抽屉顶上白白空一截，收成普通内边距。
+            */}
+            <div
+              className={cn("shrink-0", variant === "rail" ? "h-18" : "h-4")}
+            />
 
             {/* 中间：目录树（自己可滚动） */}
             <nav className="flex-1 overflow-y-auto py-2">
@@ -327,7 +365,15 @@ export default function SimpleSidebar({
                                   type="button"
                                   onClick={() => scrollTo(s.id)}
                                   className={cn(
-                                    "w-full flex items-center rounded-md px-3 py-1.5 text-base transition-colors",
+                                    /*
+                                      text-left **不能省**（大标题那一行也有它）：
+                                      原生 <button> 的 UA 样式自带 text-align:center，
+                                      而这里的标签是 flex-1 的 span（撑满整行），
+                                      居中就在这一行里显出来了 —— 标签会飘到中间。
+                                      大标题那行的 span 是自适应宽度，居中看不出来，
+                                      所以那边写了也像没用，但它是同一个原因下的同一个解。
+                                    */
+                                    "w-full flex items-center rounded-md px-3 py-1.5 text-base text-left transition-colors",
                                     subActive
                                       ? "bg-gray-100 text-gray-900 font-semibold"
                                       : "text-gray-400 hover:bg-gray-50 hover:text-gray-700",
@@ -354,7 +400,11 @@ export default function SimpleSidebar({
                 ref={collapseButtonRef}
                 variant="ghost"
                 size="sm"
-                onClick={() => toggleCollapsed(true)}
+                /*
+                 * rail：收成 w-12 窄轨（toggleCollapsed 里那套焦点搬家逻辑只在这条路上有意义）
+                 * drawer：关掉抽屉。手机没有窄轨态，收起 = 这一整块消失，焦点交给抽屉外壳的 inert
+                 */
+                onClick={onHide ?? (() => toggleCollapsed(true))}
                 className="w-full flex items-center justify-center gap-2 text-gray-600 hover:text-gray-900"
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -363,13 +413,21 @@ export default function SimpleSidebar({
             </div>
           </div>
 
-          {/* 折叠层：图标轨。同上，固定 w-12 */}
+          {/*
+            折叠层：图标轨。同上，固定 w-12。
+            variant === "drawer" 时整个 hidden（display:none）—— 手机收起来 = 抽屉关上，
+            不留窄轨，改由正文上侧那两枚圆钮（✨ / ☰）承担"随时够得着"这件事。
+            用 display:none 而不是条件渲染：这一层在抽屉里根本不会出现，没有可过渡的中间态，
+            省得把下面两百行 JSX 整段挪进一个 {variant === "rail" && (...)} 里再重排缩进。
+            display:none 本身就会把它摘出 Tab 序，所以和 inert 不冲突。
+          */}
           <div
             ref={collapsedLayerRef}
             inert={!isCollapsed}
             className={cn(
               "absolute inset-y-0 left-0 w-12 flex flex-col transition-opacity duration-200 motion-reduce:transition-none",
               isCollapsed ? "opacity-100" : "pointer-events-none opacity-0",
+              variant === "drawer" && "hidden",
             )}
           >
             {/* AI 助手：高度跟展开态那个按钮对齐（h-18），两种状态切换时目录不会跳 */}
@@ -588,7 +646,9 @@ export default function SimpleSidebar({
 
           z-30：正文列里那张封面图是 relative，同层里按 DOM 序排在后面，不抬 z 会被它盖住。
 
-          z-30：正文列里那张封面图是 relative，同层里按 DOM 序排在后面，不抬 z 会被它盖住。
+          抽屉模式（手机）整个 hidden：这颗胶囊是"侧栏边缘探出来的半个球"，前提是侧栏
+          在屏幕左沿；手机上侧栏常态是关着的，那个位置改由正文左上角两枚圆钮承担
+          （见 TripWorkspace），这边留着会和它们叠在一起。
         */}
         <Button
           onClick={onAiClick}
@@ -599,6 +659,7 @@ export default function SimpleSidebar({
             "hover:from-orange-600 hover:to-pink-600 hover:shadow-lg",
             "transition-all motion-reduce:transition-none",
             isCollapsed && "pointer-events-none opacity-0",
+            variant === "drawer" && "hidden",
           )}
         >
           {/* size-6，理由同上面折叠态那个图标（避开基类的 size-4 覆盖） */}

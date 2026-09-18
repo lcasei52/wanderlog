@@ -32,14 +32,33 @@ import SortableCardGroup from "@/components/SortableCardGroup";
  * 一天天翻下来时靠它认路，收起来就看不见等于白写。
  */
 export default function DayCard({ day }: { day: DayInfo }) {
-  const { dayItemsByDate, addItem, deleteItem, reorderItems, days, setDayTitle } =
-    usePlaces();
+  const {
+    dayItemsByDate,
+    addItem,
+    deleteItem,
+    reorderItems,
+    days,
+    setDayTitle,
+  } = usePlaces();
   // 别跟下面那个本地的 setExpanded 撞名：这个是"展开概览里哪一节"（按 section 取）
   const { hotels, setExpanded: setSectionExpanded } = useBookings();
   const [isAddingPlace, setIsAddingPlace] = useState(false);
-  // 纯视图态，不进快照也不落库（跟概览里各列表的展开状态一个性质）。
-  // 组件按 dayDate 做 key（DetailContent 里），所以它会跟着这一天走、不会被别的天串用。
-  const [expanded, setExpanded] = useState(true);
+
+  const places = dayItemsByDate(day.dayDate);
+
+  /*
+   * 纯视图态，不进快照也不落库（跟概览里各列表的展开状态一个性质）。
+   * 组件按 dayDate 做 key（DetailContent 里），所以它会跟着这一天走、不会被别的天串用。
+   *
+   * 默认值看这天**有没有地点**：空白天默认合拢 —— 不然一趟行程从头翻到尾，全是
+   * 「标题 + 副标题 + 这天晚上还没有订住宿 + 还没有添加地点」，真有内容的那几天被淹在
+   * 里面。有地点的照旧默认展开。
+   *
+   * ★ 只在**挂载那一次**算（useState 的初值本来就只取第一次）：往一个空白天里加进第一个
+   *   地点时 places 从 0 变 1，不会把用户手动合上的那天又弹开。places 因此必须挪到这一行
+   *   上面（TDZ）。
+   */
+  const [expanded, setExpanded] = useState(() => places.length > 0);
   // 「···」→「更换颜色」开着的调色弹窗（当前色由弹窗自己从 context 取，这里只存开关）
   const [showColorPicker, setShowColorPicker] = useState(false);
 
@@ -49,8 +68,6 @@ export default function DayCard({ day }: { day: DayInfo }) {
     if (expanded) setIsAddingPlace(false);
     setExpanded(!expanded);
   };
-
-  const places = dayItemsByDate(day.dayDate);
 
   /**
    * 这天晚上有没有地方睡。按"住店的那几晚"算：入住日 <= 今天 < 退房日
@@ -90,18 +107,31 @@ export default function DayCard({ day }: { day: DayInfo }) {
 
   return (
     /*
-      左边距是 pl-14（56px）而不是 p-6 那 24px：跟概览里 ListShell 的内容区
+      左边距 lg 以上是 pl-14（56px）而不是 p-6 那 24px：跟概览里 ListShell 的内容区
       （那边也是 pl-14）同一个左沿，于是"概览的小标题 / 这天的小标题 / 两边的
       PlaceCard 左沿"从上往下看是一条竖线。右边仍是 p-6 的 24px。
       这一层里唯一要贴回 24px 的是下面那行标题（那里的 -ml-8）。
+
+      ★ 手机上是 px-3：**左右一样**的 12px。内容左沿跟下面那行标题的展开箭头对齐
+      （箭头就落在卡片左沿往里 12px 上），也跟概览里 ListShell 的内容区同一个数 ——
+      这一套一共出现在三处（这里、ListShell 标题行、ListShell 内容区），再加上
+      ListDivider 的 left-1，改一处就得全改，否则那条竖线断掉。
+      上下不动（py-6）：这次收的是左右的白，纵向的呼吸留着。
+
+      注意手机上"内容左沿 12px"和"大标题那个字"并不是一条线：标题字在 44px（箭头
+      24 + gap-2 的 8 之后）。副标题 / 添加地点 / 搜索框这三处要跟着标题走，各自挂了
+      ml-8 lg:ml-0 —— 理由和算法见下面副标题那段 ★。
     */
-    <div className="bg-white rounded-lg p-6 pl-14 shadow-sm">
+    <div className="bg-white rounded-lg py-6 px-3 shadow-sm lg:pl-14 lg:pr-6">
       {/*
-        标题行反着挂回 24px（-ml-8）：卡片左边距已经是留给内容的 56px，而箭头得跟
-        概览里各列表的箭头对齐在 24px —— 那边标题行是 px-6，这样两边都从 24 起。
-        （负外边距把这一行本身撑宽 32px，右端仍落在 p-6 的 24px 上，那个菜单不动。）
+        标题行在 lg 以上要反着挂回来：卡片左边距是留给内容的 56px，而箭头得跟概览里
+        各列表的箭头对齐（那边标题行是 lg:px-6）—— -8 = 56 → 24，两边都从同一个数起。
+        （负外边距把这一行本身撑宽 32px，右端仍落在 pr-6 的 24px 上，那个菜单不动。）
+
+        手机上不用挂：卡片本身就是 px-3，这一行天然从 12px 起，跟概览里各列表标题行的
+        px-3 同一个数 —— 箭头仍旧对齐（见组件头部那段）。
       */}
-      <div className="flex -ml-8 items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-2 lg:-ml-8">
         <div className="flex min-w-0 items-center gap-2">
           {/*
             展开/收起箭头。规格和位置都跟概览里各列表那个一样（h-6 的按钮 + h-5 的
@@ -166,8 +196,17 @@ export default function DayCard({ day }: { day: DayInfo }) {
 
         外层 div 只为拿捏它跟下面内容的间距：整天收起时下面没有内容，再留 16px 就变成
         卡片底部凭空多一段空白（所以 DaySubtitle 自己不套包裹元素、也不带外边距）。
+
+        ★ ml-8 lg:ml-0：手机上这一行要跟大标题「周四 · 9月24日」的**字**左对齐，而那个
+        字不在内容左沿上 —— 它前面还站着一个 24px 的箭头和 gap-2 的 8px，字从
+        12 + 24 + 8 = 44px 起，所以这里跟 32px（ml-8）。
+        lg 以上不用跟：那时卡片是 pl-14，标题行自己 -ml-8 反挂回 24px，箭头占 24..48，
+        标题字正好落在 56px —— 就是内容左沿，于是 ml 归零（lg:ml-0）。
+
+        ★ 它和下面「+ 添加地点」那个按钮、以及点开后的搜索框是**同一个左沿**，三处
+        一起动。再往下的地点卡不跟（它们本来就贴内容左沿，没有这个偏移）。
       */}
-      <div className={cn(expanded && "mb-4")}>
+      <div className={cn("ml-8 lg:ml-0", expanded && "mb-4")}>
         <DaySubtitle
           value={day.title}
           onSave={(next) => setDayTitle(day.dayDate, next)}
@@ -204,7 +243,9 @@ export default function DayCard({ day }: { day: DayInfo }) {
                   const to = places.find((p) => p.id === beforeId);
                   const from = places[index - 1];
                   if (!from || !to) return null;
-                  return <PlaceDayGap from={from} to={to} dragging={dragging} />;
+                  return (
+                    <PlaceDayGap from={from} to={to} dragging={dragging} />
+                  );
                 }}
                 renderItem={(id) => {
                   const item = places.find((it) => it.id === id);
@@ -230,18 +271,41 @@ export default function DayCard({ day }: { day: DayInfo }) {
           {/* 添加地点输入框或按钮 */}
           {isAddingPlace ? (
             <PlaceSearchInput
+              // 跟「+ 添加地点」同一个左沿（见上面副标题那段 ★），点开时这一行不跳
+              className="ml-8 lg:ml-0"
               placeholder="搜索并添加地点"
               onPlaceSelect={handlePlaceSelect}
               onCancel={() => setIsAddingPlace(false)}
               autoFocus
             />
+          ) : places.length === 0 ? (
+            /*
+              空白天：这一句包一层跟 PlaceCard **同款**的灰框（rounded-lg bg-gray-100
+              加同一套内边距），于是它读起来是"这一天里的一张空卡"，而不是一行飘着的
+              灰字 —— 后者在这一屏（标题 + 副标题 + 订住宿提示）里太容易被当成说明文字
+              一眼划过去。
+              ★ 点击动作一个字没改（还是开那个搜索框），换的只是外观。
+
+              外面套 div 是为了 ml-8：直接在按钮上写 ml-8 + w-full 会多出 32px 溢出
+              （w-full 是父级的 100%，外边距不算在里面）。这个左沿跟上面那个搜索框、
+              里面的 PlaceCard 是同一条（lg 以上那一列整体已经是缩进的，所以 lg:ml-0）。
+            */
+            <div className="ml-8 lg:ml-0">
+              <button
+                type="button"
+                onClick={() => setIsAddingPlace(true)}
+                className="w-full rounded-lg bg-gray-100 px-2 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-500 lg:px-3"
+              >
+                还没有添加地点
+              </button>
+            </div>
           ) : (
             <Button
               variant="link"
-              className="text-sm text-gray-400 hover:text-gray-600 p-0 h-auto"
+              className="ml-8 lg:ml-0 text-sm text-gray-400 hover:text-gray-600 p-0 h-auto"
               onClick={() => setIsAddingPlace(true)}
             >
-              {places.length === 0 ? "还没有添加地点" : "+ 添加地点"}
+              + 添加地点
             </Button>
           )}
         </>

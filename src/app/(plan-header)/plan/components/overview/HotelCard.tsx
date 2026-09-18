@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { parse, format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { Card } from "@/components/ui/card";
@@ -9,8 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { cn, formatCurrency, sameFields } from "@/lib/utils";
+import { formatCurrency, sameFields } from "@/lib/utils";
 import { formatDateStringDisplay } from "@/lib/date-helpers";
+import { CardControls } from "@/components/SortableCardGroup";
 import { useBookings } from "@/context/bookings-context";
 import { usePlaces } from "@/context/places-context";
 import { useExpenses } from "@/context/expenses-context";
@@ -141,7 +142,10 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
   };
 
   return (
-    <Card className="bg-gray-50 p-4 border-0">
+    // relative：展开时那三个触摸按钮（CardControls）绝对定位到这张卡的右上角，
+    // 得有个定位参照。p-3（12px）只在手机上：外面还裹着 ListShell 的 px-3，
+    // 卡内再留 16px 在 375px 上就明显了。lg 以上回到 p-4。
+    <Card className="relative bg-gray-50 p-3 border-0 lg:p-4">
       {/*
         头部 = 折叠态摘要，整块可点开/收起。
         展开的表单是它的**兄弟节点**而不是子节点 —— role="button" 里不能套输入框。
@@ -161,7 +165,16 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
         }}
         className="cursor-pointer select-none"
       >
-        <div className="flex items-start gap-2">
+        {/*
+          这一行是卡片里**两种状态下都在最上面**的那一行，触摸上卡片右上角那三个
+          按钮（▲ ▼ 🗑，见 SortableCardGroup）正好压着它的右端 —— 不留空就会被盖住。
+          算一遍：按钮从卡片右沿往里 4(right-1) + 72(三个 size-6) = 76px；行内容右沿在
+          12(p-3) + pr-18(72) = 84px 处，正好贴住按钮左沿、留 8px 净空。
+          （按钮只在展开时出现，这里常留着这点空。）
+
+          行尾那个折叠箭头已按用户要求删掉，同航班卡/火车卡。
+        */}
+        <div className="flex items-start gap-2 pointer-coarse:pr-18">
           <div className="min-w-0 flex-1">
             <div className="text-base font-semibold text-gray-900">
               {hotel.name}
@@ -170,12 +183,6 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
               {hotel.address || "地址待补充"}
             </div>
           </div>
-          <ChevronDown
-            className={cn(
-              "mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform motion-reduce:transition-none",
-              expanded && "rotate-180"
-            )}
-          />
         </div>
 
         <div className="mt-3 flex items-center gap-2">
@@ -196,8 +203,23 @@ export default function HotelCard({ hotel }: { hotel: Hotel }) {
         </div>
       </div>
 
+      {/*
+        触摸上那三个按钮（▲ ▼ 🗑）：只在展开时出现，绝对定位落在卡片右上角
+        （参照物是上面 Card 那个 relative）。★ 必须挂在展开区外面，理由见下。
+      */}
+      {expanded && <CardControls className="right-1 top-1" />}
+
+      {/*
+        contain-inline-size：展开区不参与卡片宽度的计算，点开卡片不会把整个正文列
+        顶宽、把地图挤窄。机制（左列在 lg 上是 max-content 撑出来的）、为什么展开区
+        天生更宽（<input> 的固有宽度、两列 grid、truncate 的日期串）、以及为什么那
+        三个按钮必须留在这个盒子**外面**，见 FlightCard 同一处的长注释。
+
+        ★ 航班/住宿/火车三张卡是同一处，改一张就瞄一眼另外两张。
+      */}
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
+        <div className="contain-inline-size mt-3 pt-3 border-t border-gray-200 space-y-3">
+
           <div className="space-y-1">
             <Label className="text-xs font-normal text-gray-500">酒店名</Label>
             <Input

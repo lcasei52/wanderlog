@@ -28,11 +28,22 @@ export default function PlacesList({ list }: { list: PlaceList }) {
     reorderItems,
   } = usePlaces();
   const { batch } = useHistory();
-  const [expanded, setExpanded] = useState(true);
-  // 「···」→「更换颜色」开着的调色弹窗（当前色由弹窗自己从 context 取，这里只存开关）
-  const [showColorPicker, setShowColorPicker] = useState(false);
 
   const items = listItems(list.id);
+
+  /*
+   * 默认展开还是合拢：**空列表默认合拢**，有地点的默认展开。
+   * 空列表展开着只剩一行「搜索并添加地点」，却占掉一屏目录的位置；合起来标题行还在、
+   * 箭头也在，点一下就是同一个输入框，一点没藏。
+   *
+   * ★ 它只在**挂载那一次**算（useState 的初值本来就只取第一次），之后 items 从空变满
+   *   不会把这个 state 改掉 —— 这正是"默认状态"该有的意思：用户手动合上过的列表，
+   *   不会因为旁边加了个地点就自己弹开。函数形式只是把这个意图写在脸上。
+   *   items 因此必须挪到这一行**上面**（TDZ）。
+   */
+  const [expanded, setExpanded] = useState(() => items.length > 0);
+  // 「···」→「更换颜色」开着的调色弹窗（当前色由弹窗自己从 context 取，这里只存开关）
+  const [showColorPicker, setShowColorPicker] = useState(false);
 
   const toInput = (result: PlaceSearchResult): PlaceItemInput => ({
     groupKey: buildGroupKey(result),

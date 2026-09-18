@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight, ChevronDown, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { cn, formatCurrency, sameFields } from "@/lib/utils";
+import { formatCurrency, sameFields } from "@/lib/utils";
+import { CardControls } from "@/components/SortableCardGroup";
 import { formatDateStringDisplay } from "@/lib/date-helpers";
 import { useBookings } from "@/context/bookings-context";
 import { useExpenses } from "@/context/expenses-context";
@@ -119,7 +120,10 @@ export default function FlightCard({ flight }: { flight: Flight }) {
     .join(" — ");
 
   return (
-    <Card className="bg-gray-50 p-4 border-0">
+    // relative：展开时那三个触摸按钮（CardControls）绝对定位到这张卡的右上角，
+    // 得有个定位参照。p-3（12px）只在手机上：外面还裹着 ListShell 的 px-3，
+    // 卡内再留 16px 在 375px 上就明显了。lg 以上回到 p-4。
+    <Card className="relative bg-gray-50 p-3 border-0 lg:p-4">
       {/*
         头部 = 折叠态摘要，整块可点开/收起。
         展开的表单是它的**兄弟节点**而不是子节点 —— role="button" 里不能套输入框。
@@ -139,7 +143,28 @@ export default function FlightCard({ flight }: { flight: Flight }) {
         }}
         className="cursor-pointer select-none"
       >
-        <div className="flex items-center gap-4">
+        {/*
+          这一行是卡片里**两种状态下都在最上面**的那一行，触摸上卡片右上角那三个
+          按钮（▲ ▼ 🗑，见 SortableCardGroup）正好压着它的右端 —— 不留空就会被盖住。
+          算一遍：按钮从卡片右沿往里 4(right-1) + 72(三个 size-6) = 76px；行内容右沿在
+          12(p-3) + pr-18(72) = 84px 处，正好贴住按钮左沿、留 8px 净空。
+          站名长了会折到第二行，不会顶出去。（按钮只在展开时出现，这里常留着这点空。）
+
+          原来行尾那个 ml-auto 的折叠箭头已经删掉：箭头表示"能展开"这件事，
+          而这张卡整块都是可点的、展开后内容自带一条分隔线，"能不能展开"看内容就知道。
+          （火车卡、住宿卡上那个是同一个，一起删的。）
+
+          ★ items-start 不是 items-center：这一行两块内容**高度可以不相等** ——
+          城市名可空（老数据、手动加的都可能没有），于是常常是"左边两行、右边一行"。
+          items-center 会按各自的高度分别垂直居中，两块的大字就不在同一条基线上了
+          （用户看到的就是"内容没对齐"）。改成从顶对齐，两个大字天然齐平，
+          下面那行城市名有没有都不影响。（住宿卡本来就是 items-start，所以它没这个毛病。）
+
+          所以中间的箭头得自己往下挪：它是 items-start 之后唯一一个需要居中的东西。
+          text-lg 的行高是 28px（v4 里 calc(1.75 / 1.125)），中线在 14px；箭头 h-5 是 20px，
+          上边距 = 14 - 20/2 = 4px = mt-1。
+        */}
+        <div className="flex items-start gap-4 pointer-coarse:pr-18">
           {/* 出发地 */}
           <div>
             <div className="text-lg font-bold text-gray-900">{flight.from}</div>
@@ -149,7 +174,7 @@ export default function FlightCard({ flight }: { flight: Flight }) {
           </div>
 
           {/* 箭头 */}
-          <ArrowRight className="h-5 w-5 shrink-0 text-gray-400" />
+          <ArrowRight className="mt-1 h-5 w-5 shrink-0 text-gray-400" />
 
           {/* 目的地 */}
           <div>
@@ -158,13 +183,6 @@ export default function FlightCard({ flight }: { flight: Flight }) {
               <div className="text-sm text-gray-500">{flight.toCity}</div>
             )}
           </div>
-
-          <ChevronDown
-            className={cn(
-              "ml-auto h-4 w-4 shrink-0 text-gray-400 transition-transform motion-reduce:transition-none",
-              expanded && "rotate-180"
-            )}
-          />
         </div>
 
         {/* 时间和航班号 */}
@@ -190,8 +208,42 @@ export default function FlightCard({ flight }: { flight: Flight }) {
         </div>
       </div>
 
+      {/*
+        触摸上那三个按钮（▲ ▼ 🗑）：只在展开时出现，绝对定位落在卡片右上角
+        （参照物是上面 Card 那个 relative）。
+
+        ★ 必须挂在展开区**外面** —— 跟下面那个 contain-inline-size 的盒子平级。
+        塞进盒子里的话，那个盒子成了绝对定位的包含块（原因见下面那段），按钮就从
+        "卡片右上角"掉到"展开区右上角"，压在第一行表单上。
+      */}
+      {expanded && <CardControls className="right-1 top-1" />}
+
+      {/*
+        ★ contain-inline-size 不是装饰，是"展开卡片不改变正文列宽度"的唯一原因。
+
+        看 TripWorkspace 左列那行（lg:flex-initial lg:min-w-auto）：那一列的宽度是
+        **内容撑出来的** —— flex: 0 auto 的基准尺寸取 max-content，min-width: auto
+        又不让它缩到内容以下，而地图列只是 lg:flex-1，拿的是剩下的。于是展开区里
+        只要有一样东西的固有宽度比收起态那行站名宽，整列就跟着变宽、地图被挤窄，
+        收起来又缩回去 —— 表现就是"点开一张卡，整个正文列宽一下"。
+
+        而展开区里恰好全是有固有宽度的控件：<input> 天生就有二十来个字符那么宽
+        （w-full 只决定它用起来多宽，管不了它往上报的 max-content），两列 grid 把
+        两份加起来；DateField 里那串日期是 truncate（nowrap），也按整串算。三样加
+        起来就比收起态宽。
+
+        contain: inline-size 让这个盒子**按"里面什么都没有"参与固有尺寸计算**：它给
+        祖先报的 max-content 是 0，于是卡片宽度只由收起态那部分决定，展开内容一律按
+        卡片**当时的**宽度排版。块轴不包含，高度照旧由内容撑开。
+
+        展开内容压得下去，不会顶出去被 Card 的 overflow-hidden 切掉：输入框都是
+        w-full、grid 轨道是 minmax(0,1fr)、日期串自己 truncate、说明文字是中文会折行。
+
+        ★ 三张预订卡（航班/住宿/火车）是同一处，改一张就瞄一眼另外两张。
+      */}
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
+        <div className="contain-inline-size mt-3 pt-3 border-t border-gray-200 space-y-3">
+
           <FlightFormFields
             draft={draft}
             onChange={set}

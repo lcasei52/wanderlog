@@ -131,16 +131,33 @@ export default function BookingCard() {
         h-full：与右侧预算摘要卡同一行，撑满 grid 给的行高，两张卡底边框才齐。
         这一行里这张卡是高的那张，行高由它决定 —— 收它才是真的收整行。
 
-        px-6 py-4 而不是 p-6：横向那 24 是跟正文列（DetailContent 的 px-6）对齐的，
+        px-6 py-4 而不是 p-6：横向那 24 是跟正文列（DetailContent 的 lg:px-6）对齐的，
         不动；只把竖向从 24 收到 16。mb-6 → mb-4 同理，标题底下那段也是两张卡共有的。
+
+        sm 以下横向再收到 12（px-3）：这一格在任何宽度都只占 2/3（见 DetailContent
+        顶部那行），375px 上只有 234px 宽，而下面六个图标要挤在一行 —— 234 − 24 = 210，
+        六等分每格 35px。够不够得看**有计数的那几格**（"航班 3"，汉字 24 + 字距 2 +
+        数字 7 ≈ 33px，比图标还宽）；横向内边距要是留在 16，每格只剩 33px 就贴上了。
 
         纯白底试过改成浅灰（跟列表里那些航班/住宿卡一致），最后还是要白的 ——
         这两张是直接摆在 gray-50 页面上的，白底反而是一行里唯一的亮面。
         **右边那张摘要卡必须同步改同一组类**，否则只是把矮的那张往上拉、整行纹丝不动。
       */}
-      <div className="bg-white rounded-lg px-6 py-4 shadow-sm h-full">
+      <div className="bg-white rounded-lg px-3 py-4 shadow-sm h-full sm:px-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">预订和附件</h3>
-        <div className="flex items-center justify-between">
+        {/*
+          ★ 六个图标**任何宽度都是一行**，绝不能折行。折了这张卡就变高，而它跟右边
+          预算摘要卡同一行、共用行高（h-full），等于把两张卡一起顶高 —— 用户报的
+          "两个卡片都变高了"就是这么来的。
+
+          所以窄屏是**挤**出来的一行：定死六列（grid-cols-* 的 minmax(0,1fr) 保证
+          格子不被内容顶宽），按钮在窄屏不留横向内边距（p-0），文字那行也收紧字距
+          （gap-0.5）。宽屏这些全放开 —— sm 以上每格有 60px，p-2 / gap-1 是原样。
+
+          别改回 flex + justify-between：那样每格宽度由内容决定，有计数的格子
+          （"航班 3"）比没计数的宽，六个加起来超过一行就又折回去了。
+        */}
+        <div className="grid grid-cols-6">
           {bookingItems.map((item) => {
             /*
              * 一格"有内容"= count > 0，图标和小圆点都看它，免得两处各说各话。
@@ -150,7 +167,10 @@ export default function BookingCard() {
               <Button
                 key={item.label}
                 variant="ghost"
-                className="flex flex-col items-center gap-2 h-auto p-2 hover:opacity-70"
+                // p-0：窄屏那 35px 的格子一分都匀不出来（理由见上面那段注释），
+                // sm 以上回到 p-2。点击区不是靠内边距撑的 —— 按钮是 grid 的格子
+                // 拉伸出来的，整格都能点。
+                className="flex flex-col items-center gap-2 h-auto p-0 hover:opacity-70 sm:p-2"
                 onClick={item.onClick}
               >
                 <div className="relative">
@@ -165,7 +185,7 @@ export default function BookingCard() {
                     <div className="absolute -top-1 -right-1 h-2 w-2 bg-orange-500 rounded-full" />
                   )}
                 </div>
-                <div className="flex items-baseline gap-1">
+                <div className="flex items-baseline gap-0.5 sm:gap-1">
                   <span className="text-xs text-gray-600">{item.label}</span>
                   {item.count > 0 && (
                     <span className="text-xs font-semibold text-gray-900">

@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { differenceInCalendarDays, parse } from "date-fns";
-import { ArrowRight, ChevronDown, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { cn, formatCurrency, sameFields } from "@/lib/utils";
+import { formatCurrency, sameFields } from "@/lib/utils";
+import { CardControls } from "@/components/SortableCardGroup";
 import { formatDateStringDisplay } from "@/lib/date-helpers";
 import { useBookings } from "@/context/bookings-context";
 import { useExpenses } from "@/context/expenses-context";
@@ -133,7 +134,10 @@ export default function TrainCard({ train }: { train: Train }) {
       : 0;
 
   return (
-    <Card className="bg-gray-50 p-4 border-0">
+    // relative：展开时那三个触摸按钮（CardControls）绝对定位到这张卡的右上角，
+    // 得有个定位参照。p-3（12px）只在手机上：外面还裹着 ListShell 的 px-3，
+    // 卡内再留 16px 在 375px 上就明显了。lg 以上回到 p-4。
+    <Card className="relative bg-gray-50 p-3 border-0 lg:p-4">
       {/*
         头部 = 折叠态摘要，整块可点开/收起。
         展开的表单是它的**兄弟节点**而不是子节点 —— role="button" 里不能套输入框。
@@ -152,7 +156,14 @@ export default function TrainCard({ train }: { train: Train }) {
         }}
         className="cursor-pointer select-none"
       >
-        <div className="flex items-center gap-4">
+        {/*
+          见 FlightCard 同一行的说明：触摸上给右上角那三个按钮让出 76px（pr-18）；
+          items-start 而不是 items-center —— 城市名可空，两边高度常常不等，
+          居中对齐会让两个站名不在同一条线上（这就是"内容没对齐"）；箭头因此要
+          自己 mt-1 落到大字的中线上（text-lg 行高 28px 的中线 14px − 箭头 20px/2）。
+          行尾那个折叠箭头已按用户要求删掉，同 FlightCard。
+        */}
+        <div className="flex items-start gap-4 pointer-coarse:pr-18">
           {/* 上车站：大字是站名，小字是城市 */}
           <div>
             <div className="text-lg font-bold text-gray-900">
@@ -163,7 +174,7 @@ export default function TrainCard({ train }: { train: Train }) {
             )}
           </div>
 
-          <ArrowRight className="h-5 w-5 shrink-0 text-gray-400" />
+          <ArrowRight className="mt-1 h-5 w-5 shrink-0 text-gray-400" />
 
           {/* 下车站 */}
           <div>
@@ -174,13 +185,6 @@ export default function TrainCard({ train }: { train: Train }) {
               <div className="text-sm text-gray-500">{train.toCity}</div>
             )}
           </div>
-
-          <ChevronDown
-            className={cn(
-              "ml-auto h-4 w-4 shrink-0 text-gray-400 transition-transform motion-reduce:transition-none",
-              expanded && "rotate-180"
-            )}
-          />
         </div>
 
         {/* 日期和两个时刻 */}
@@ -221,8 +225,23 @@ export default function TrainCard({ train }: { train: Train }) {
         )}
       </div>
 
+      {/*
+        触摸上那三个按钮（▲ ▼ 🗑）：只在展开时出现，绝对定位落在卡片右上角
+        （参照物是上面 Card 那个 relative）。★ 必须挂在展开区外面，理由见下。
+      */}
+      {expanded && <CardControls className="right-1 top-1" />}
+
+      {/*
+        contain-inline-size：展开区不参与卡片宽度的计算，点开卡片不会把整个正文列
+        顶宽、把地图挤窄。机制（左列在 lg 上是 max-content 撑出来的）、为什么展开区
+        天生更宽（<input> 的固有宽度、两列 grid、truncate 的日期串）、以及为什么那
+        三个按钮必须留在这个盒子**外面**，见 FlightCard 同一处的长注释。
+
+        ★ 航班/住宿/火车三张卡是同一处，改一张就瞄一眼另外两张。
+      */}
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
+        <div className="contain-inline-size mt-3 pt-3 border-t border-gray-200 space-y-3">
+
           {/*
             这里**不传 onStationPick**：改站名不会回头动那两张站点卡（也不重查 12306），
             跟"改航班不会动机场卡"是同一条规矩。传了反而会让人以为能联动。

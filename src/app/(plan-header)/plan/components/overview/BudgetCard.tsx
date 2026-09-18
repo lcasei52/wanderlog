@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Settings, Users, FileText } from "lucide-react";
+import { Settings, Users, FileText, Pencil } from "lucide-react";
 import { useExpenses } from "@/context/expenses-context";
 import { currencySymbol, formatCurrency } from "@/lib/utils";
 import BudgetSettingsDialog from "./BudgetSettingsDialog";
@@ -16,7 +16,11 @@ interface BudgetCardProps {
   tripId: string;
 }
 
-export default function BudgetCard({ budget, budgetCurrency, tripId }: BudgetCardProps) {
+export default function BudgetCard({
+  budget,
+  budgetCurrency,
+  tripId,
+}: BudgetCardProps) {
   const { totalSpent } = useExpenses();
 
   const [showBudgetSettings, setShowBudgetSettings] = useState(false);
@@ -29,7 +33,8 @@ export default function BudgetCard({ budget, budgetCurrency, tripId }: BudgetCar
   const symbol = currencySymbol(currency);
 
   // 进度条百分比
-  const progress = budget && budget > 0 ? Math.min((totalSpent / budget) * 100, 100) : 0;
+  const progress =
+    budget && budget > 0 ? Math.min((totalSpent / budget) * 100, 100) : 0;
   const isOverBudget = budget && totalSpent > budget;
 
   return (
@@ -40,8 +45,7 @@ export default function BudgetCard({ budget, budgetCurrency, tripId }: BudgetCar
           <div className="flex-4 p-6 space-y-4">
             {/* 总金额 */}
             <div>
-              <p className="text-sm text-gray-500 mb-1">当前总额</p>
-              <p className="text-4xl font-bold text-gray-900">
+              <p className="text-4xl text-gray-900">
                 {formatCurrency(totalSpent, currency)}
               </p>
             </div>
@@ -51,7 +55,13 @@ export default function BudgetCard({ budget, budgetCurrency, tripId }: BudgetCar
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">预算使用</span>
-                  <span className={isOverBudget ? "text-red-600 font-semibold" : "text-gray-900"}>
+                  <span
+                    className={
+                      isOverBudget
+                        ? "text-red-600 font-semibold"
+                        : "text-gray-900"
+                    }
+                  >
                     {formatCurrency(budget, currency)}
                   </span>
                 </div>
@@ -71,20 +81,33 @@ export default function BudgetCard({ budget, budgetCurrency, tripId }: BudgetCar
               </div>
             )}
 
-            {/* 操作按钮 */}
+            {/*
+              操作按钮。样式跟 DetailContent 里那颗「选择日期」是同一套写法：
+              outline 变体自带描边和 hover 底，这里用 border-0 + bg-gray-100 盖掉 ——
+              它们是这一屏的"内容块"，描边按钮摆在这儿比卡片本身还重。
+
+              ★ size 用 lg（h-9）而不是原来的 sm（h-7）：文字从 sm 档（0.8rem）提到
+                text-base 之后，h-7 那个高度会把字挤得贴边。图标写 size-4 是必须的 ——
+                Button 基类那条 [&_svg:not([class*='size-'])]:size-4 只认 size- 开头的类，
+                写成 h-4 w-4 会被它当没写。
+            */}
             <div className="flex gap-2 pt-2">
               <Button
                 variant="outline"
-                size="sm"
+                size="lg"
+                className="gap-2 border-0 bg-gray-100 text-base font-semibold text-gray-700 hover:bg-gray-200 hover:text-gray-900"
                 onClick={() => setShowBudgetSettings(true)}
               >
+                <Pencil className="size-4" />
                 编辑预算
               </Button>
               <Button
                 variant="outline"
-                size="sm"
+                size="lg"
+                className="gap-2 border-0 bg-gray-100 text-base font-semibold text-gray-700 hover:bg-gray-200 hover:text-gray-900"
                 onClick={() => setShowTeamBalance(true)}
               >
+                <Users className="size-4" />
                 团队情况
               </Button>
             </div>
@@ -96,7 +119,9 @@ export default function BudgetCard({ budget, budgetCurrency, tripId }: BudgetCar
               className="flex-1 flex flex-col items-center justify-center gap-1 hover:bg-gray-50 transition-colors p-3"
               onClick={() => {
                 // 滚动到费用列表
-                document.getElementById('expenses-list')?.scrollIntoView({ behavior: 'smooth' });
+                document
+                  .getElementById("expenses-list")
+                  ?.scrollIntoView({ behavior: "smooth" });
               }}
             >
               <FileText className="h-5 w-5 text-gray-600" />
@@ -136,10 +161,7 @@ export default function BudgetCard({ budget, budgetCurrency, tripId }: BudgetCar
         onOpenChange={setShowTeamBalance}
       />
 
-      <AddMemberDialog
-        open={showAddMember}
-        onOpenChange={setShowAddMember}
-      />
+      <AddMemberDialog open={showAddMember} onOpenChange={setShowAddMember} />
     </>
   );
 }

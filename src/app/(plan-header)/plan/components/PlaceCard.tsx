@@ -11,6 +11,7 @@ import type { PlaceItem } from "@/types/place";
 import { usePlaces } from "@/context/places-context";
 import { useExpenses } from "@/context/expenses-context";
 import { cn, formatCurrency } from "@/lib/utils";
+import { CardControls } from "@/components/SortableCardGroup";
 import LinkedExpenseButton from "./overview/LinkedExpenseButton";
 import VisitedButton, { visitedToggleFeedback } from "./VisitedButton";
 import PlaceKindBadge from "./PlaceKindBadge";
@@ -131,16 +132,29 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
     <div
       ref={rootRef}
       className={cn(
-        "rounded-lg bg-gray-100 px-3 py-2",
+        // relative：展开时那三个触摸按钮（CardControls）是绝对定位到这张卡的右上角的，
+        // 得有一个定位参照（它们只在展开态存在，但参照物得一直在）。
+        // px-2（8px）只在手机上：这张卡在行程/列表里层层嵌套，外层已经各留了一点，
+        // 卡内再留 12px 在 375px 上就明显了。lg 以上回到 px-3。
+        // 改这个数要连着看下面图钉的 -ml-5 / lg:-ml-6 —— 那是一对（见那里的算术）。
+        "relative rounded-lg bg-gray-100 px-2 py-2 lg:px-3",
         expanded ? "" : "hover:bg-gray-50 cursor-pointer",
       )}
     >
       {/*
-        收起/展开 头部行。
-        pr-6 是给拖动柄留的：柄浮在卡片里面、垂直居中（SortableCardGroup 的
-        handleSide="right"），**收起态下整张卡就是这一行**，居中正好落在行尾，
-        不留就会盖住那个金额小标。（展开态下柄会落到卡片中间，但那时金额小标本来
-        就不显示了。）
+        收起/展开 头部行。右边留多宽，取决于这一行右边浮着什么：
+
+        - 桌面：pr-6 是给拖动柄留的。柄浮在卡片里面、垂直居中（SortableCardGroup 的
+          handleSide="right"），**收起态下整张卡就是这一行**，居中正好落在行尾，
+          不留就会盖住那个金额小标。（展开态下柄会落到卡片中间，但那时金额小标本来
+          就不显示了。）
+        - 触摸：柄没有了，换成卡片右上角那三个按钮（▲ ▼ 🗑）。它们**只在展开时出现**，
+          但仍然是压在这一行右端的（展开态下这一行还是最上面那行），横向占 76px ——
+          不留出 pr-19（76px）名字就会被压住。
+          算一遍：按钮从卡片右沿往里 4(right-1) + 72(三个 size-6) = 76px，行内容右沿
+          在 8(px-2) + 76 = 84px 处 —— 就是 pr-19 加上 px-2，正好贴住按钮左沿。
+          （收起态不必再留：那时这三个按钮压根不渲染，pr-19 只是没害处。）
+
         收起来的那个右三角箭头（原来在这一行最右）已经去掉 —— 它跟柄是同一个位置，
         而且展开与否看内容就知道，不必再要一个箭头。
       */}
@@ -154,16 +168,23 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
             handleRowClick();
           }
         }}
-        className="flex items-start gap-2 cursor-pointer group pr-6"
+        className="flex items-start gap-2 cursor-pointer group pr-6 pointer-coarse:pr-19"
       >
         {/*
           图钉：手动地点 = 容器色 + 序号；机场/酒店/车站 = 来源色 + 图标（与地图一致）。
 
-          -ml-6 是这张图上唯一讲究的地方：卡片 px-3，内容从 12px 起，再往左 24px 正好
-          让这个 24px 宽的图钉**中心落在卡片左沿上** —— 一半在卡里、一半在卡外，像钉在
-          卡片边上。它不是绝对定位，仍是这一行 flex 里的一项，所以戳出去的那半照样是
-          卡片的一部分：点它一样能展开这张卡，点外面收起时它也还算"卡内"。
+          -ml-6 只在 lg 以上：那里卡片内边距是 px-3(12px)，再往左 24px 正好让这个 24px
+          宽的图钉**中心落在卡片左沿上** —— 一半在卡里、一半在卡外，像钉在卡片边上。
+          它不是绝对定位，仍是这一行 flex 里的一项，所以戳出去的那半照样是卡片的一部分：
+          点它一样能展开这张卡，点外面收起时它也还算"卡内"。
+          ★ 这跟上面那个 px-3 是一对：-24 + 12 = -12，动一个就得动另一个
+          （改错的表现是图钉偏离卡片边沿，肉眼看得出来）。
           （PlaceDayGap 那条点线的位置就照着这个中心来，动它要一起动。）
+
+          **手机上不再往外戳**（从前是 -ml-5）：卡内边距只有 8px，往外 20px 会把图钉
+          整个推到卡片外面 —— 在行程那种"卡片外面还有一层内边距"的容器里看着就是漏出去了。
+          现在它老老实实待在卡片里（占满题头左侧那 24px），名字因此从 20px 挪到 40px；
+          下面展开区那份内容的 pl-10 得跟着对（见那里的说明）。
 
           -mt-0.5 把水滴头抬到跟第一行标题同一条中线上（外框 py-2 = 8px，再往上 2px）。
         */}
@@ -172,7 +193,7 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
           number={number}
           color={containerColor}
           variant="pin"
-          className="-ml-6 -mt-0.5"
+          className="-mt-0.5 lg:-ml-6"
         />
 
         {/*
@@ -215,10 +236,18 @@ function PlaceCardBody({ item }: { item: PlaceItem }) {
         )}
       </div>
 
-      {/* 展开：就地编辑（pl-5 = 20px，跟上面的名称左沿对齐 —— 图钉挪到卡片边上之后，
-          标题那一行是从 20px 起的） */}
+      {/* 展开：就地编辑。左边距跟着名称那一行：pl-5(20px) 是 lg 以上的数（图钉压在卡片
+          边上，名称从 20px 起）；手机上图钉收进卡里了，名称从 40px 起，所以是 pl-10。
+          ★ 跟上面图钉那处是一对，改一个要瞄一眼另一个。 */}
       {expanded && (
-        <div className="mt-2 pl-5 space-y-2">
+        <div className="mt-2 pl-10 space-y-2 lg:pl-5">
+          {/*
+            触摸上那三个按钮（▲ ▼ 🗑）就摆在这儿 —— 挂在展开区里，所以只在展开时出现
+            （用户要的正是这个：收起态的卡片是一行摘要，不该顶着三个操作按钮）。
+            绝对定位，参照物是卡片本身（上面 root 那个 relative），落在右上角。
+          */}
+          <CardControls className="right-1 top-1" />
+
           <Textarea
             value={note}
             rows={2}

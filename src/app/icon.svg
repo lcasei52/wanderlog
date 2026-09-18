@@ -6,6 +6,28 @@
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="15" fill="url(#brand)" />
-  <path d="M32 7C21.5 7 13 15.5 13 26c0 14 19 30 19 30s19-16 19-30C51 15.5 42.5 7 32 7z" fill="#ffffff" />
-  <circle cx="32" cy="26" r="7" fill="url(#brand)" />
+  <!--
+    地图图案，跟顶栏那颗 logo（header.tsx 里的 lucide Map）是同一个形状，
+    路径直接取自 lucide 的 map 图标，没有自己画。
+
+    lucide 的图形按 24×24 设计、实际占 3~21 那一块（18×18）。这里缩 40/18 倍放进
+    64 的方块里居中：12 - 3×(40/18) = 5.333 就是左上角的偏移。改缩放比例时
+    这两个数要一起改，别只改一个。
+
+    stroke-width 给的是 24 空间里的值，会跟着 scale 一起放大（2.5 → 方块上 5.6px）。
+    比 lucide 默认的 2 粗一档：那个默认是给 24px 尺寸调的，缩到浏览器标签页那 16px
+    上会细得发虚。
+  -->
+  <g
+    transform="translate(5.333 5.333) scale(2.222)"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="2.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z" />
+    <path d="M15 5.764v15" />
+    <path d="M9 3.236v15" />
+  </g>
 </svg>

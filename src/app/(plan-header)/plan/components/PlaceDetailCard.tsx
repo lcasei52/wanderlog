@@ -340,12 +340,56 @@ function DetailBody({
   const navBtn =
     "h-7 px-2 gap-1 text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent";
 
+  /*
+   * ★ 卡片里的排版按**容器**宽度断，不按视口宽度 —— 这是这张卡最反直觉的一处。
+   *
+   * 地图列有多宽，跟窗口多宽根本不是一回事：左边那一列（SimpleSidebar +
+   * DetailContent）是 `flex: 0 1 auto`，宽度由**内容**撑着，地图列是 `flex-1`，
+   * 只能吃剩下的。于是 1024px 的窗口留给地图的只有 200 出头（这也正是"左列约 800"
+   * 这个数的反推来源），1280 上约 448，1440 上才 600 出头。
+   *
+   * 而卡右边那张图原来写的是 `w-40 sm:w-56`：sm 断的是**视口** 640px，1024 的窗口
+   * 早就过了，于是图钉死在 224px —— 160(卡内宽) − 224(图) − 16(gap) 是个负数，
+   * 文字列被压没，一个汉字一行地竖着排下来（用户报的"内容被挤坏了、文字变成竖着的"）。
+   *
+   * 所以这里换成 @container：量的是"这张卡到底有多少地方"。容器挂在下面那层
+   * flex 列上，宽度 = 地图列扣掉左右各 16px（px-4）—— 特意选它是因为它**自己不带
+   * padding**：容器查询量的是内容盒，挂在带 padding 的元素上还得在心里把那圈扣掉。
+   * 卡片自己还有 p-4，所以文字列真正能用的是：容器宽 − 32 − 图宽 − 16(gap)。
+   *
+   * 图的四档（容器宽，加 32 就是地图列宽）：
+   *   < 288    单列：图通栏、文字整宽，再窄也竖不起来
+   *   ≥ 288    两列，图 128，文字 ≥ 112
+   *   ≥ 320    两列，图 160 ← **375/390 手机上原本就是这个数，一个像素没动**
+   *   ≥ 512    两列，图 224 ← 桌面原本的 sm:w-56，同样保持原样
+   * 一句话：小屏和宽屏的观感都是原样，改掉的只有 1024~1200 那段原来被挤坏的区域。
+   *
+   * ★ 同一个病在卡里还有两处，都按**同一个容器**断，三处合起来才是"文字不竖着排"
+   *   这件事的全部 —— 光缩图是不够的：
+   *     · 工具条上「3个中的第1个」「缩放至此地点」两个标签（窄了收成图标）
+   *     · 标题行里那个 126px 的「标记为已访问」（窄了让它换行，把整行让给地名）
+   *
+   * ★ 单列那档必须把 `col-span-2` 一起摘掉（写成 @2xs:col-span-2）：网格只有一列时
+   *   挂着 span 2，浏览器会为了装下它**凭空长出第二条隐式列**，第一列当场被挤窄 ——
+   *   比不修还糟。
+   */
   return (
     <div className="absolute inset-0 z-20 flex px-4 pb-4 overflow-hidden pointer-events-none">
       {/* h-full：让内层占满地图列高度，卡片的 max-h-[55%] 才有确定参照系，
-          内容超高时在正文里滚动而不是撑破/裁掉 */}
-      <div className="flex h-full w-full flex-col justify-end gap-2">
-        {/* 卡片上方这一行：左边导航工具条、右边关闭按钮，两者同一条水平线 */}
+          内容超高时在正文里滚动而不是撑破/裁掉
+
+          @container 挂在这一层：工具条和卡片都住在它里面，一套断点管两处；
+          挑它而不是卡片本身，是因为它不带内边距（理由见上面那段 ★）。 */}
+      <div className="@container flex h-full w-full flex-col justify-end gap-2">
+        {/*
+          卡片上方这一行：左边导航工具条、右边关闭按钮，两者同一条水平线。
+
+          容器窄的时候两个文字标签各自收掉、只留图标（下面那两处 hidden @2xs:inline /
+          @xs:inline）：1024 那个宽度上地图列只有 224px，整条"3个中的第1个 ·
+          缩放至此地点"是撑不下的，而按钮基类带 whitespace-nowrap、关闭按钮又是
+          flex-shrink-0，硬撑的结果是关闭按钮被顶出这一行外（这一层 overflow-hidden，
+          直接切掉）。阈值跟下面卡片那套是同一个容器，都在这层里量的。
+        */}
         <div className="flex w-full items-center justify-between gap-2">
           {/* 工具条：前后切换 + 缩放至此地点 */}
           <div className="flex items-center rounded-full border border-gray-200 bg-white px-1.5 py-1 shadow-lg pointer-events-auto">
@@ -361,7 +405,9 @@ function DetailBody({
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
-                <span className="px-1 text-xs text-gray-600 whitespace-nowrap">
+                {/* 窄容器只留前后两个箭头：这一串里就数它最占地方，而 ← → 本身
+                    已经说明了"能前后翻"，那两个箭头挨着谁看都懂 */}
+                <span className="hidden px-1 text-xs text-gray-600 whitespace-nowrap @2xs:inline">
                   {total}个中的第{curIndex + 1}个
                 </span>
                 <Button
@@ -389,7 +435,8 @@ function DetailBody({
               }
             >
               <Crosshair className="h-3.5 w-3.5" />
-              缩放至此地点
+              {/* 窄容器里收成图标按钮，title/aria-label 都在，鼠标和读屏照样认得出 */}
+              <span className="hidden @xs:inline">缩放至此地点</span>
             </Button>
           </div>
 
@@ -410,12 +457,27 @@ function DetailBody({
         <Card className="w-full pointer-events-auto shadow-2xl rounded-2xl p-4 gap-0 overflow-y-auto overflow-x-hidden max-h-[55%]">
           {/* 两列网格：左边文字，右边图；下面那些通栏的用 col-span-2。
               用网格而不是 float —— 环绕是"文字绕到图底下"，这里要的是
-              "图就占住右上角那一块"，网格是确定的，不依赖行盒怎么算 */}
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-4">
+              "图就占住右上角那一块"，网格是确定的，不依赖行盒怎么算。
+
+              ★ 窄容器（< @2xs）塌成**一列**：图通栏、文字整宽。那种宽度下两列无解 ——
+              图再怎么缩也要占掉一半，文字只剩几十像素、一个汉字一行，单列是唯一的出路。
+
+              ★ 下面那条 col-span-2 必须跟着断点走（@2xs:col-span-2），不能一直挂着：
+              网格只有一列时 span 2 会凭空长出第二条**隐式**列，第一列当场被挤窄。 */}
+          <div className="grid grid-cols-1 gap-x-4 gap-y-4 @2xs:grid-cols-[minmax(0,1fr)_auto]">
             {/* 左上：标题 + 详情行 */}
             <div className="min-w-0 space-y-4">
-              {/* 标题行 + 已访问开关 */}
-              <div className="flex items-start justify-between gap-3">
+              {/* 标题行 + 已访问开关。
+                  ★ 换行只在**窄容器**里开（@max-md，容器 < 448）：「标记为已访问」是个
+                  whitespace-nowrap + flex-shrink-0 的按钮（126px 上下），容器 192 时
+                  整个文字列才 160，它一个就吃掉 126 + 12(gap)，留给地名的是 0 ——
+                  又一个"文字竖着排"的来源。开成换行，地名先占满一整行，按钮落到下一行。
+
+                  ★ 但不能一直开着：flex 的换行判据是各元素的 max-content（**不会**先
+                  去挤），名字一长（max-content 超过文字列宽）就会在宽卡片上也把按钮
+                  甩到第二行 —— 而宽卡片上原本的表现是"地名自己折成两行、按钮留在右边"，
+                  那才是对的。所以这个 wrap 必须跟着容器宽度走，不能常开。 */}
+              <div className="flex items-start justify-between gap-3 @max-md:flex-wrap">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     {/* 机场/酒店自动生成的地点用来源图标，其余用容器色 + 序号 */}
@@ -469,10 +531,16 @@ function DetailBody({
 
             {/* 右上：图。self-start 让它保持自己的比例、不被左边文字拉高；
                 aspect 固定成 4:3，这样 object-cover 只裁一点边，
-                不会像之前那个"竖长条"框一样把照片放大好几倍 */}
+                不会像之前那个"竖长条"框一样把照片放大好几倍。
+
+                ★ 宽度按**容器**分档，不再用 sm:（视口）—— 理由见上面 ★ 那段：
+                1024 的窗口上地图列只有 224px，而 sm 断的 640 早就过了，图会钉在 224
+                把文字挤没。四档里 288 和 320 那两档是给窄地图列用的，
+                320 和 512 那两档**正好等于手机上原本的 w-40 和桌面上原本的 w-56**，
+                也就是小屏/宽屏的观感原样不动。 */}
             <div
               className={cn(
-                "group/photo relative aspect-4/3 w-40 self-start overflow-hidden rounded-xl sm:w-56",
+                "group/photo relative aspect-4/3 w-full self-start overflow-hidden rounded-xl @2xs:w-32 @xs:w-40 @lg:w-56",
                 cur.photo
                   ? "bg-gray-100"
                   : "bg-gradient-to-br from-orange-200 to-amber-100"
@@ -493,11 +561,18 @@ function DetailBody({
                     aria-label="查看大图"
                     onClick={() => setLightbox(cur.photo)}
                   />
-                  {/* 手机上没 hover，这枚药丸就常驻；桌面端 hover 才浮出来 */}
+                  {/*
+                    触摸设备上常驻，桌面端 hover 才浮出来。
+
+                    判断条件不能用 sm:（640px 宽度）去代理"桌面"：宽度和"有没有 hover"
+                    是两回事，800px 的触屏平板过了 sm、又永远不 hover —— 那枚药丸就
+                    永久隐形。pointer-fine 才是真条件（@media (pointer: fine)），
+                    而且它是活的：iPad 接上触控板，这枚药丸立刻跟着回到 hover 那套。
+                  */}
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="absolute bottom-1.5 left-1/2 z-10 h-7 -translate-x-1/2 gap-1 px-2 text-xs shadow-sm opacity-100 transition-opacity sm:opacity-0 sm:group-hover/photo:opacity-100 sm:focus-visible:opacity-100"
+                    className="absolute bottom-1.5 left-1/2 z-10 h-7 -translate-x-1/2 gap-1 px-2 text-xs shadow-sm opacity-100 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover/photo:opacity-100 pointer-fine:focus-visible:opacity-100"
                     onClick={() => setShowPicker(true)}
                   >
                     <ImagePlus className="h-3.5 w-3.5" />
@@ -517,8 +592,8 @@ function DetailBody({
               )}
             </div>
 
-            {/* 下面这些一律通栏 */}
-            <div className="col-span-2 space-y-4">
+            {/* 下面这些一律通栏（单列那档它就是普通的一行，见上面 ★） */}
+            <div className="space-y-4 @2xs:col-span-2">
               {/* 高德给的其余照片，点开看大图 */}
               {otherPhotos.length > 0 && (
                 <div className="flex gap-2 overflow-x-auto pb-1">
@@ -545,7 +620,11 @@ function DetailBody({
               {/* 简介：这个地方"是什么"（资料）。和 note 分工不同 ——
                   note 是"我要做什么"，显示在收起态的那张卡上 */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
+                {/* 这一行是「简介」+ 两个按钮（生成简介 / 编辑），加起来一百八十多像素，
+                    窄容器里撑不下就换行，别去挤标题。这里的 flex-wrap 可以常开：
+                    三样都是固定宽度的小东西，装得下就绝不会换行（跟上面标题行不同，
+                    那边有个会长到没边的地名，见那段 ★）。 */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4 className="text-sm font-medium text-gray-700">简介</h4>
                   <div className="flex items-center gap-1">
                     <Button

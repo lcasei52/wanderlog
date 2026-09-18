@@ -76,8 +76,13 @@ export default function ListShell({
 
   return (
     <div id={anchorId} className="scroll-mt-4">
-      {/* 标题行 */}
-      <div className="flex items-center gap-2 py-5 px-6">
+      {/*
+        标题行。手机上 px-3（12px）：这一层和下面的内容区一起决定了"卡片离卡片盒左/右沿
+        多远"，缩它是"手机不留白"的主要一环。
+        展开箭头就从这 12px 起 —— 它和行程里 DayCard 的箭头本来对齐在 24px，现在两边
+        一起变成 12px（DayCard 那边整张卡就是 px-3，头部不用再挂负边距），仍旧对齐。
+      */}
+      <div className="flex items-center gap-2 py-5 px-3 lg:px-6">
         {/* 展开/收起箭头 */}
         <Button
           variant="ghost"
@@ -145,8 +150,17 @@ export default function ListShell({
         )}
       </div>
 
-      {/* 展开的内容 */}
-      {expanded && <div className="px-6 pl-14 pb-5">{children}</div>}
+      {/*
+        展开的内容。手机上是 px-3 —— **左右一样**的 12px：内容左沿正好落在上面那行
+        标题的展开箭头上（标题行也是 px-3，箭头就占 12..36），离两边一样远。
+        以前这里多挂一个 pl-10（40px，为的是对齐标题**文字**），于是左边 40px、
+        右边 12px 的差在 375px 上看得出来，去掉了。
+
+        lg 以上保留 pl-14（56px）：桌面不缺那点宽度，内容缩到标题文字下面更好读。
+        ★ 手机这一套跟 DetailContent 里「+ 新列表」那一行、以及 ListDivider 的
+        left-1（+ 号落在 12px）是同一套数，改这里要一起改（三处都写了 lg: 前后两套）。
+      */}
+      {expanded && <div className="px-3 pb-5 lg:px-6 lg:pl-14">{children}</div>}
     </div>
   );
 }

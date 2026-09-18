@@ -91,6 +91,21 @@ export function PlaceListGap({ onPlaceSelect, dragging }: PlaceListGapProps) {
   // 下拉菜单开着时指针已经离开这条间隔，但虚线 + 号要保持可见，不然像凭空消失
   const stayVisible = menuOpen ? "opacity-100 pointer-events-auto" : null;
 
+  /*
+   * 触摸设备上这个 + 常显（压低透明度），因为那边 hover 根本不存在：
+   * Tailwind v4 把 hover: / group-hover: 全包在 @media (hover: hover) 里
+   * （可以在编译产物里核对），触摸设备上 group-hover/gap:opacity-100 那两条
+   * 压根不匹配 —— 不是"透明但还在"，是圆钮永远出不来。间隔里的就地插入在触摸上
+   * 没有别的入口（列表尾部那个添加框只能加到最后），所以这里必须常显。
+   *
+   * menuOpen 时必须为 null：stayVisible 里的 opacity-100 是**基础类**，
+   * 而 pointer-coarse:opacity-40 是变体，变体规则在样式表里排在基础工具之后、
+   * 同权重必胜 —— 留着它，菜单开着圆钮也只有 40%，看着像坏了。
+   */
+  const coarseEntry = menuOpen
+    ? null
+    : "pointer-coarse:opacity-40 pointer-coarse:pointer-events-auto";
+
   return (
     // h-6：这条间隔本身的高度（在流里，所以会把 SortableCardGroup 的间隔撑到 24px），
     // hover 区正好等于它，不越界到上下两张卡里
@@ -112,9 +127,12 @@ export function PlaceListGap({ onPlaceSelect, dragging }: PlaceListGapProps) {
             aria-label="在此处添加地点"
             title="在此处添加地点"
             // size-4：16px 的小圆钮，正好骑在间隔上（图标用 size-3，避开 Button 的 svg 默认尺寸规则）
+            // pointer-coarse:size-6：触摸上放大到 24px —— 16px 手指点不准，而这条间隔
+            // 本身正好 h-6（24px），撑满它不越界到上下两张卡里去。
             className={cn(
-              "size-4 rounded-full absolute left-0 top-1/2 -translate-y-1/2 p-0 text-gray-500 opacity-0 pointer-events-none transition-opacity group-hover/gap:opacity-100 group-hover/gap:pointer-events-auto hover:border-orange-400 hover:text-orange-500 focus-visible:opacity-100 focus-visible:pointer-events-auto",
+              "size-4 rounded-full absolute left-0 top-1/2 -translate-y-1/2 p-0 text-gray-500 opacity-0 pointer-events-none transition-opacity group-hover/gap:opacity-100 group-hover/gap:pointer-events-auto hover:border-orange-400 hover:text-orange-500 focus-visible:opacity-100 focus-visible:pointer-events-auto pointer-coarse:size-6",
               stayVisible,
+              coarseEntry,
             )}
           >
             <Plus className="size-3" />
@@ -144,9 +162,11 @@ interface PlaceDayGapProps {
  *
  * 1. 卡片左沿往里一点一条竖向点线，把同一天的卡片"串"起来 —— 线在 x = 24..26
  *    （left-6 的 24px + w-0.5 的 2px），也就是卡片左沿往里 25px。
- *    图钉是**压着卡片左沿**钉的（见 PlaceCard 的 -ml-6）：头是个 24px 的圆、中心
- *    落在卡片左沿 x = 0 上，右边缘到 x = 12 —— 所以这条线其实是走在卡片里面的一根
+ *    图钉是**压着卡片左沿**钉的（见 PlaceCard 的 -ml-6，lg 以上）：头是个 24px 的圆、
+ *    中心落在卡片左沿 x = 0 上，右边缘到 x = 12 —— 所以这条线其实是走在卡片里面的一根
  *    "轨道"，跟钉头之间还隔着 12px。
+ *    手机上（那边 -ml-6 不生效）图钉收进了卡里，头占 8..32、中心在 20，线（25）
+ *    比钉头中心偏右 5px —— 就在钉头右缘里侧一点，看着仍是从图钉这一列穿下去的。
  *    要挪它改 left-6，想核对跟图钉的关系就一起看 PlaceCard 的 -ml-6（一对数，
  *    动一个就瞄一眼另一个）。
  * 2. 点线右边一行"这段路怎么走"：交通方式图标 + 耗时 · 距离 + 下拉箭头，
@@ -271,7 +291,13 @@ export function PlaceDayGap({ from, to, dragging }: PlaceDayGapProps) {
           variant="ghost"
           size="sm"
           title="显示路线"
-          className="absolute left-8 top-1/2 h-5 -translate-y-1/2 px-1.5 text-[11px] font-normal text-gray-400 opacity-0 transition-opacity group-hover/gap:opacity-100 hover:text-gray-600 focus-visible:opacity-100"
+          /*
+            触摸上常显（同 PlaceListGap 那个 + 的理由），但透明度只压到 60% 而不是 40%：
+            这行是 11px 的 text-gray-400（#99a1af），再乘 40% 差不多 #d6d9dd，
+            跟旁边那条 bg-gray-100 的分隔线已经是同一个量级，手机上会糊成一道灰痕。
+            h-7 则正好填满这条间隔（它自己就是 h-7），触摸目标 20px → 28px，居中不变。
+          */
+          className="absolute left-8 top-1/2 h-5 -translate-y-1/2 px-1.5 text-[11px] font-normal text-gray-400 opacity-0 transition-opacity group-hover/gap:opacity-100 hover:text-gray-600 focus-visible:opacity-100 pointer-coarse:opacity-60 pointer-coarse:h-7"
           onClick={() => showGap(gap)}
         >
           <Route className="h-3 w-3" />
@@ -288,7 +314,8 @@ export function PlaceDayGap({ from, to, dragging }: PlaceDayGapProps) {
                 variant="ghost"
                 size="sm"
                 aria-label="这段路的交通方式"
-                className="h-5 px-1.5 text-xs font-normal text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                // pointer-coarse:h-7：这行本来就是 h-7，撑满它 → 触摸目标 20px → 28px
+                className="h-5 px-1.5 text-xs font-normal text-gray-500 hover:bg-gray-100 hover:text-gray-700 pointer-coarse:h-7"
               >
                 <ModeIcon className="h-3.5 w-3.5" />
                 <span className="tabular-nums">
@@ -365,7 +392,7 @@ export function PlaceDayGap({ from, to, dragging }: PlaceDayGapProps) {
             variant="ghost"
             size="sm"
             title="用高德地图导航这段路"
-            className="h-5 px-1.5 text-xs font-medium text-gray-500 hover:bg-orange-50 hover:text-orange-600"
+            className="h-5 px-1.5 text-xs font-medium text-gray-500 hover:bg-orange-50 hover:text-orange-600 pointer-coarse:h-7"
             onClick={handleNavigate}
           >
             路线

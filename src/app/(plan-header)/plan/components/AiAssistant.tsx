@@ -346,10 +346,14 @@ ${tripContext}
 
   return (
     <>
-      {/* 遮罩 - 只覆盖左侧 sidebar + detail 区域，不覆盖地图 */}
+      {/*
+        遮罩 - 只覆盖左侧 sidebar + detail 区域，不覆盖地图。
+        手机上 lg 断点以下没有"不覆盖地图"这回事（面板本来就铺满屏），w-full 就对了；
+        800px 是给桌面那三栏里的正文列留的量。
+      */}
       {isOpen && (
         <div
-          className="fixed top-0 bottom-0 left-0 w-[800px] bg-black/20 z-40 transition-opacity"
+          className="fixed top-0 bottom-0 left-0 w-full lg:w-200 bg-black/20 z-40 transition-opacity"
           onClick={onClose}
         />
       )}
@@ -357,7 +361,7 @@ ${tripContext}
       {/* 侧边栏 */}
       <div
         className={cn(
-          "fixed top-0 bottom-0 left-0 w-[800px] bg-white shadow-2xl z-50 transition-transform duration-300 ease-out flex flex-col",
+          "fixed top-0 bottom-0 left-0 w-full lg:w-200 bg-white shadow-2xl z-50 transition-transform duration-300 ease-out flex flex-col",
           isOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
